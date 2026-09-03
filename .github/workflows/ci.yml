@@ -1,0 +1,116 @@
+-- Secrets used by this workflow (set once with gh):
+--   gh secret set SUPABASE_DB_URL
+-- Direct DB URI from Supabase → Project Settings → Database → Connection string
+-- (URI, session/direct, sslmode=require). URL-encode the password.
+--
+-- PRs: tests, typecheck, Next build, and apply migrations on an ephemeral DB
+--      that was initialized from schema-dry-run.sql (same as a manual init).
+-- Merge to main: push pending files in supabase/migrations/ only.
+-- schema-dry-run.sql is never applied to production by CI.
+
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Test, build, migrations
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBsYWNlaG9sZGVyIiwicm9sZSI6ImFub24iLCJpYXQiOjE2MDAwMDAwMDAsImV4cCI6MTkwMDAwMDAwMH0.placeholder
+      NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY: pk_test_ci
+      PAYSTACK_SECRET_KEY: sk_test_ci
+      PAYSTACK_CURRENCY: USD
+      SUPABASE_SERVICE_ROLE_KEY: ci-service-role
+      CODEFUNDI_API_KEY: ci-codefundi
+      WORLDLABS_API_KEY: ci-worldlabs
+      CREDITS_IP_PEPPER: ci-pepper
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+      - name: Install psql
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Check migrations apply on an initialized schema
+        env:
+          PGPASSWORD: postgres
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+        run: |
+          set -euo pipefail
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/ci/postgres-stub.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/schema-dry-run.sql
+          shopt -s nullglob
+          for file in supabase/migrations/*.sql; do
+            echo "Applying $file"
+            psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$file"
+          done
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/ci/assert-schema.sql
+
+  migrate:
+    name: Push migrations to Supabase
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Apply pending supabase/migrations
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          if [ -z "$SUPABASE_DB_URL" ]; then
+            echo "Missing secret SUPABASE_DB_URL. Set it with: gh secret set SUPABASE_DB_URL"
+            exit 1
+          fi
+          supabase db push --db-url "$SUPABASE_DB_URL" --yes

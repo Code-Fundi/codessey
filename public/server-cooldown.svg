@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 240" role="img" aria-label="Server rack cooling">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0b1210"/>
+      <stop offset="100%" stop-color="#05080a"/>
+    </linearGradient>
+    <linearGradient id="rack" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#1f2a24"/>
+      <stop offset="100%" stop-color="#0d1411"/>
+    </linearGradient>
+  </defs>
+  <rect width="640" height="240" fill="url(#bg)"/>
+  <ellipse cx="320" cy="210" rx="210" ry="18" fill="#22c55e" opacity="0.08"/>
+  <g transform="translate(190,28)">
+    <rect x="0" y="0" width="260" height="176" rx="10" fill="url(#rack)" stroke="#4ade80" stroke-opacity="0.35"/>
+    <rect x="12" y="16" width="236" height="28" rx="4" fill="#111816" stroke="#14532d"/>
+    <rect x="12" y="52" width="236" height="28" rx="4" fill="#111816" stroke="#14532d"/>
+    <rect x="12" y="88" width="236" height="28" rx="4" fill="#111816" stroke="#14532d"/>
+    <rect x="12" y="124" width="236" height="28" rx="4" fill="#111816" stroke="#14532d"/>
+    <circle cx="28" cy="30" r="4" fill="#86efac"/>
+    <circle cx="28" cy="66" r="4" fill="#4ade80"/>
+    <circle cx="28" cy="102" r="4" fill="#22c55e" opacity="0.7"/>
+    <circle cx="28" cy="138" r="4" fill="#86efac" opacity="0.5"/>
+    <rect x="48" y="24" width="120" height="6" rx="2" fill="#166534"/>
+    <rect x="48" y="60" width="150" height="6" rx="2" fill="#166534"/>
+    <rect x="48" y="96" width="90" height="6" rx="2" fill="#166534"/>
+    <rect x="48" y="132" width="170" height="6" rx="2" fill="#166534"/>
+  </g>
+  <path d="M250 200 C270 170, 290 170, 310 200" fill="none" stroke="#86efac" stroke-opacity="0.25" stroke-width="3"/>
+  <path d="M330 200 C350 168, 370 168, 390 200" fill="none" stroke="#86efac" stroke-opacity="0.2" stroke-width="3"/>
+</svg>

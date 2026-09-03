@@ -1,0 +1,16 @@
+# Minimal CLI config so `supabase db push --db-url` can apply supabase/migrations/.
+# Initialize the database yourself with schema-dry-run.sql; CI only pushes new migrations.
+
+project_id = "codessey"
+
+[api]
+enabled = false
+
+[db]
+major_version = 15
+
+[studio]
+enabled = false
+
+[inbucket]
+enabled = false

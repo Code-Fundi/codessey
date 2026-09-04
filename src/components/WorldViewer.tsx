@@ -40,7 +40,9 @@ export function WorldViewer({ world, isGenerating, progress, repoName }: WorldVi
             ) : (
               <>
                 <Map className="h-8 w-8 text-white/30" />
-                <p className="text-sm text-white/70">Search Worlds from Explore to generate a landscape.</p>
+                <p className="text-sm text-white/70">
+                  Search Worlds from Explore to generate a landscape.
+                </p>
                 <p className="text-xs text-white/40">The 3D world will appear here.</p>
               </>
             )}

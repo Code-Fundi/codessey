@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import { buildLandscapePrompt, compileLandscapeScene, parseRepoOwner } from "./prompts";
 import type { FileListItem, RepositoryIndexInitRepo } from "./codefundi.client";
 
-function index(partial: Partial<RepositoryIndexInitRepo> & { url: string }): RepositoryIndexInitRepo {
+function index(
+  partial: Partial<RepositoryIndexInitRepo> & { url: string },
+): RepositoryIndexInitRepo {
   return {
     branch: "main",
     data_source_id: null,

@@ -3,11 +3,7 @@ import type { FileListItem } from "@/lib/codefundi.client";
 import { tickCredits } from "@/lib/credits.server";
 import { buildLandscapePrompt } from "@/lib/prompts";
 import { getServerCodeFundi, getServerWorldLabs } from "@/lib/providers.server";
-import {
-  currentUserId,
-  fulfillPendingWorld,
-  preSavePendingWorld,
-} from "@/lib/world-poll.server";
+import { currentUserId, fulfillPendingWorld, preSavePendingWorld } from "@/lib/world-poll.server";
 
 async function loadDocumentedFiles(
   url: string,
@@ -21,13 +17,16 @@ async function loadDocumentedFiles(
       const timer = setTimeout(() => resolve(null), 2500);
       getServerCodeFundi()
         .listFiles(key, { limit: 40, order_by: "file_path" }, { skipCache: true })
-        .then((value) => {
-          clearTimeout(timer);
-          resolve(value);
-        }, (error: unknown) => {
-          clearTimeout(timer);
-          reject(error);
-        });
+        .then(
+          (value) => {
+            clearTimeout(timer);
+            resolve(value);
+          },
+          (error: unknown) => {
+            clearTimeout(timer);
+            reject(error);
+          },
+        );
     });
     return listed?.data ?? [];
   } catch {

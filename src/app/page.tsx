@@ -62,13 +62,16 @@ export default function Index() {
     });
   }, []);
 
-  const handleTabChange = useCallback((tab: MainTab) => {
-    setMainTab(tab);
-    if (tab === "explore" && !isGenerating) {
-      setSelectedId(null);
-      setWorld((current) => (current?.status === "pending" ? current : null));
-    }
-  }, [isGenerating]);
+  const handleTabChange = useCallback(
+    (tab: MainTab) => {
+      setMainTab(tab);
+      if (tab === "explore" && !isGenerating) {
+        setSelectedId(null);
+        setWorld((current) => (current?.status === "pending" ? current : null));
+      }
+    },
+    [isGenerating],
+  );
 
   const handleCreditsOpenChange = useCallback((open: boolean, reason?: CreditsDialogReason) => {
     if (reason) setCreditsReason(reason);
@@ -107,10 +110,7 @@ export default function Index() {
   }, [generate, repoUrl, branch, refresh, refetchWorlds]);
 
   const showGallery =
-    mainTab === "explore" &&
-    !isGenerating &&
-    world?.status !== "pending" &&
-    !world?.splatUrl;
+    mainTab === "explore" && !isGenerating && world?.status !== "pending" && !world?.splatUrl;
 
   return (
     <div className="h-screen bg-[#090C10] text-foreground overflow-hidden">

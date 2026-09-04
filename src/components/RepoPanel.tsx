@@ -210,7 +210,7 @@ export function RepoPanel(props: RepoPanelProps) {
                         </p>
                         <p className="text-[11px] text-white/45 truncate">
                           {row.status === "pending"
-                            ? row.progress ?? "Generating…"
+                            ? (row.progress ?? "Generating…")
                             : `${row.branch} · ${row.is_public ? "public" : "private"}`}
                         </p>
                       </div>

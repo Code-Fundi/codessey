@@ -118,11 +118,9 @@ function corpus(index: RepositoryIndexInitRepo, documented: FileListItem[]): str
     index.url,
     index.branch ?? "",
     ...files.slice(0, 120).map((f) => `${f.path} ${f.language ?? ""} ${f.ext}`),
-    ...documented.slice(0, 40).flatMap((f) => [
-      f.file_path,
-      f.description ?? "",
-      ...(f.dependencies ?? []),
-    ]),
+    ...documented
+      .slice(0, 40)
+      .flatMap((f) => [f.file_path, f.description ?? "", ...(f.dependencies ?? [])]),
   ]
     .join(" ")
     .toLowerCase();
@@ -200,7 +198,8 @@ function skylineFor(fileCount: number, depth: number, folders: FolderCount[]): s
   if (depth >= 6 && dominant > 0.45) {
     return "one tall citadel over a low outer ring";
   }
-  if (fileCount > 400 && folders.length >= 6) return "a packed tower skyline with stepped mid-rises";
+  if (fileCount > 400 && folders.length >= 6)
+    return "a packed tower skyline with stepped mid-rises";
   if (folders.length >= 5) return "mixed mid-rise blocks around a civic core";
   if (depth <= 2) return "a wide low sprawl along a ridge";
   return "clustered halls with a few taller lookouts";
@@ -344,15 +343,16 @@ function climateFor(
   else if (/docker|k8s|helm/.test(blob)) weather = "low marine fog in the valleys";
   else if (/security|auth/.test(blob)) weather = "cold frost on roofs and pines";
   else if (/game|three|spark/.test(blob)) weather = "dramatic stacked clouds, shafts of sun";
-  else weather = pick(
-    [
-      "dry air and long visibility",
-      "soft high haze",
-      "a distant storm on the horizon",
-      "crisp wind and racing cloud shadows",
-    ],
-    `${key}:wx`,
-  );
+  else
+    weather = pick(
+      [
+        "dry air and long visibility",
+        "soft high haze",
+        "a distant storm on the horizon",
+        "crisp wind and racing cloud shadows",
+      ],
+      `${key}:wx`,
+    );
   return { timeOfDay: time, weather };
 }
 
@@ -364,7 +364,8 @@ function districtFor(folder: string, count: number): string {
     return `${label} as civic plazas and gallery streets`;
   }
   if (/api|server|backend|services/.test(name)) return `${label} as signal towers and relay houses`;
-  if (/test|spec|e2e|__tests__/.test(name)) return `${label} as training grounds and proving courts`;
+  if (/test|spec|e2e|__tests__/.test(name))
+    return `${label} as training grounds and proving courts`;
   if (/doc|readme|wiki/.test(name)) return `${label} as library terraces`;
   if (/infra|deploy|ops|k8s|terraform|docker/.test(name)) {
     return `${label} as docks, cranes, and bridge heads`;
@@ -476,9 +477,7 @@ export function compileLandscapeScene(input: LandscapePromptInput): CompiledLand
     essence ? `Atmosphere from the CodeFundi description: ${essence}.` : "",
     languages ? `Material accents follow languages ${languages}.` : "",
     folderSummary ? `Top-level areas ${folderSummary}.` : "",
-    documentedNotes.length
-      ? `File notes from CodeFundi: ${documentedNotes.join("; ")}.`
-      : "",
+    documentedNotes.length ? `File notes from CodeFundi: ${documentedNotes.join("; ")}.` : "",
     `CodeFundi counted about ${fileCount} files on branch ${index.branch || "main"}.`,
     "Natural lighting, coherent geography, rich mid-ground detail, no floating text, no screenshots of code.",
   ]

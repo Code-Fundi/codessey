@@ -78,9 +78,9 @@ export function AboutModal() {
               tiltResetting={tiltResetting}
               showHolo={!flipped}
             />
-        </div>
-      </DialogContent>
-    </Dialog>
+          </div>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

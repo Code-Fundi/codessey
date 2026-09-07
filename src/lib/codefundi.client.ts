@@ -416,6 +416,20 @@ export interface ReadmeData {
 
 export type ReadmeResponse = BaseResponse<ReadmeData>;
 
+export interface RepoBlueprintData {
+  url?: string | null;
+  branch?: string | null;
+  description?: string | null;
+  readme?: string | null;
+  conventions?: string | string[] | null;
+  dependencies?: unknown;
+  languages?: unknown;
+  total_files?: number | null;
+  file_count?: number | null;
+}
+
+export type BlueprintResponse = BaseResponse<RepoBlueprintData>;
+
 // ============================================================================
 // File Types
 // ============================================================================
@@ -1754,6 +1768,18 @@ export class CodeFundiAPIClient {
     const segment = encodeRepoKeyForV2FilesPath(repoKey);
     const queryParams = this.buildQueryString({});
     return this.makeRequest<ReadmeResponse>(`/v2/repos/${segment}/readme${queryParams}`, {
+      method: "GET",
+    });
+  }
+
+  /**
+   * Get a CodeFundi repo blueprint (README, deps, conventions) when already indexed.
+   * @param repoKey - Source UUID or raw clone URL (same path encoding as {@link CodeFundiAPIClient.getRepoReadme}).
+   */
+  async getRepoBlueprint(repoKey: FilesRepoPathKey): Promise<BlueprintResponse> {
+    const segment = encodeRepoKeyForV2FilesPath(repoKey);
+    const queryParams = this.buildQueryString({});
+    return this.makeRequest<BlueprintResponse>(`/v2/repos/${segment}/blueprint${queryParams}`, {
       method: "GET",
     });
   }

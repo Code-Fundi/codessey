@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { Image as ImageIcon } from "lucide-react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 import { BrandCard } from "@/components/BrandCard";
 import { useCardInteraction } from "@/hooks/useCardInteraction";
 import { cn } from "@/lib/utils";
@@ -11,9 +13,20 @@ interface PostcardModalProps {
   onOpenChange: (open: boolean) => void;
   repoName?: string | null;
   imageUrl?: string | null;
+  caption?: string | null;
+  capturedUrl?: string | null;
+  onDownloadCaptured?: () => void;
 }
 
-export function PostcardModal({ open, onOpenChange, repoName, imageUrl }: PostcardModalProps) {
+export function PostcardModal({
+  open,
+  onOpenChange,
+  repoName,
+  imageUrl,
+  caption,
+  capturedUrl,
+  onDownloadCaptured,
+}: PostcardModalProps) {
   const allowDismiss = useRef(false);
   const { flipped, tilt, tiltResetting, rotating, holoVars, updateTilt, flip, reset, resetTilt } =
     useCardInteraction();
@@ -41,30 +54,52 @@ export function PostcardModal({ open, onOpenChange, repoName, imageUrl }: Postca
         <DialogTitle className="sr-only">
           {repoName ? `Postcard from ${repoName}` : "Codessey postcard"}
         </DialogTitle>
-        <button
-          type="button"
-          className={cn(
-            "card-holo-wrap card-landscape relative cursor-pointer appearance-none bg-transparent border-0 p-0",
-            !flipped && "card-holo-active",
-            rotating && "card-holo-rotating",
-          )}
-          style={holoVars}
-          aria-label={flipped ? "Flip postcard to front" : "Flip postcard to back"}
-          onClick={flip}
-          onPointerMove={(e) => updateTilt(e.clientX, e.clientY, e.currentTarget)}
-          onPointerLeave={resetTilt}
-        >
-          <BrandCard
-            variant="postcard"
-            repoName={repoName}
-            imageUrl={imageUrl}
-            flipped={flipped}
-            tiltX={tilt.x}
-            tiltY={tilt.y}
-            tiltResetting={tiltResetting}
-            showHolo={!flipped}
-          />
-        </button>
+        {capturedUrl ? (
+          <div className="flex flex-col items-center gap-3">
+            <img
+              src={capturedUrl}
+              alt={repoName ? `Postcard from ${repoName}` : "Codessey postcard"}
+              className="card-postcard rounded-2xl shadow-[0_30px_80px_-30px_rgba(21,128,61,0.45)]"
+            />
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={onDownloadCaptured}
+              className="bg-transparent border-white/15 text-white/85 hover:bg-white/5 hover:text-white"
+            >
+              <ImageIcon size={14} className="mr-1.5" />
+              Download postcard
+            </Button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            className={cn(
+              "card-holo-wrap card-postcard relative cursor-pointer appearance-none bg-transparent border-0 p-0",
+              !flipped && "card-holo-active",
+              rotating && "card-holo-rotating",
+            )}
+            style={holoVars}
+            aria-label={flipped ? "Flip postcard to front" : "Flip postcard to back"}
+            onClick={flip}
+            onPointerMove={(e) => updateTilt(e.clientX, e.clientY, e.currentTarget)}
+            onPointerLeave={resetTilt}
+          >
+            <BrandCard
+              variant="postcard"
+              repoName={repoName}
+              imageUrl={imageUrl}
+              caption={caption}
+              flipped={flipped}
+              tiltX={tilt.x}
+              tiltY={tilt.y}
+              tiltResetting={tiltResetting}
+              showHolo={!flipped}
+              holoIntensity={1}
+            />
+          </button>
+        )}
       </DialogContent>
     </Dialog>
   );

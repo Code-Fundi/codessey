@@ -3,6 +3,7 @@
 import { Map } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { WorldRow } from "@/lib/database.types";
+import { parseGithubOwnerRepo, repoNameFromUrl } from "@/lib/repo-url";
 import { cn } from "@/lib/utils";
 
 interface WorldGalleryProps {
@@ -16,7 +17,7 @@ interface WorldGalleryProps {
 export function WorldGallery({ worlds, loading, error, selectedId, onSelect }: WorldGalleryProps) {
   return (
     <section className="relative h-full w-full flex flex-col overflow-hidden p-3 sm:p-4 md:p-6">
-      <div className="pointer-events-none absolute inset-0 radial-green" />
+      <div className="pointer-events-none absolute inset-0 radial-blue" />
       <div className="relative shrink-0 mb-3 text-xs text-white/40 font-display uppercase tracking-[0.3em] text-center">
         Explore worlds
       </div>
@@ -67,7 +68,9 @@ function WorldPreviewCard({
   selected: boolean;
   onSelect: (world: WorldRow) => void;
 }) {
-  const title = world.repo_name ?? world.repo_url.split("/").filter(Boolean).pop() ?? "World";
+  const parsed = parseGithubOwnerRepo(world.repo_url);
+  const title = parsed?.repo ?? world.repo_name ?? repoNameFromUrl(world.repo_url) ?? "World";
+  const owner = parsed?.owner ?? null;
   const created = new Date(world.created_at);
   const createdLabel = Number.isNaN(created.getTime())
     ? ""
@@ -81,12 +84,12 @@ function WorldPreviewCard({
       aria-label={`Open ${title} world`}
       className={cn(
         "gallery-card group relative w-full aspect-[3/4] overflow-hidden rounded-2xl text-left border transition-transform duration-200",
-        "hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500/70",
-        selected ? "border-green-500/80 ring-1 ring-green-500/40" : "border-white/10",
+        "hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/70",
+        selected ? "border-blue-500/80 ring-1 ring-blue-500/40" : "border-white/10",
       )}
     >
       <img
-        src={world.thumbnail_url || world.pano_url || "/map-bg.jpg"}
+        src={world.pano_url || world.thumbnail_url || "/map-bg.jpg"}
         alt=""
         draggable={false}
         className="absolute inset-0 h-full w-full object-cover scale-[1.02] group-hover:scale-105 transition-transform duration-500"
@@ -99,6 +102,7 @@ function WorldPreviewCard({
       <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/25 to-black/10" />
       <div className="absolute inset-x-0 bottom-0 z-[1] p-3.5">
         <p className="text-sm font-semibold text-white truncate">{title}</p>
+        {owner && <p className="mt-0.5 text-[11px] text-white/70 truncate">{owner}</p>}
         {world.caption && (
           <p className="mt-1 text-[11px] leading-snug text-white/70 line-clamp-2">
             {world.caption}

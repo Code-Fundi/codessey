@@ -13,10 +13,15 @@ describe("resolvePackAmount", () => {
     expect(PRESET_PACKS.every((p) => p.usdCents === p.usd * 100)).toBe(true);
   });
 
-  it("converts custom whole-dollar amounts at $1 per coin", () => {
+  it("converts custom whole-dollar amounts at $0.50 per coin", () => {
+    expect(resolvePackAmount("custom", 6)).toEqual({
+      usdCents: 600,
+      coins: 12,
+      packId: "custom",
+    });
     expect(resolvePackAmount("custom", 15)).toEqual({
       usdCents: 1500,
-      coins: 15,
+      coins: 30,
       packId: "custom",
     });
   });

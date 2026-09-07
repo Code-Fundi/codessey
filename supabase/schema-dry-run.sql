@@ -17,9 +17,10 @@ create extension if not exists "pgcrypto";
 -- Enums
 -- ---------------------------------------------------------------------------
 do $$ begin
-  create type public.ledger_reason as enum ('signup_grant', 'pack_purchase', 'generate');
+  create type public.ledger_reason as enum ('signup_grant', 'pack_purchase', 'generate', 'postcard_download');
 exception when duplicate_object then null;
 end $$;
+alter type public.ledger_reason add value if not exists 'postcard_download';
 
 do $$ begin
   create type public.payment_status as enum ('pending', 'success', 'failed', 'abandoned');
@@ -36,10 +37,12 @@ create table if not exists public.app_config (
 );
 
 insert into public.app_config (key, value_int) values
-  ('free_gen_coins', 3),
+  ('free_gen_coins', 2),
   ('custom_min_usd_cents', 500),
-  ('custom_cents_per_coin', 100)
+  ('custom_cents_per_coin', 50)
 on conflict (key) do nothing;
+
+update public.app_config set value_int = 50 where key = 'custom_cents_per_coin';
 
 -- Preset packs the purchase UI reads with the public key.
 create table if not exists public.coin_packs (
@@ -205,7 +208,7 @@ begin
   end if;
 
   v_min := coalesce(public.config_int('custom_min_usd_cents'), 500);
-  v_per := coalesce(public.config_int('custom_cents_per_coin'), 100);
+  v_per := coalesce(public.config_int('custom_cents_per_coin'), 50);
 
   if p_cents < v_min then
     raise exception 'amount_below_minimum' using errcode = '22023';
@@ -243,7 +246,7 @@ begin
     raise exception 'not_authenticated' using errcode = '28000';
   end if;
 
-  v_amount := coalesce(public.config_int('free_gen_coins'), 3);
+  v_amount := coalesce(public.config_int('free_gen_coins'), 2);
 
   select balance into v_balance from public.wallets where user_id = p_user_id for update;
 
@@ -591,6 +594,14 @@ grant select on public.wallets to authenticated;
 grant select on public.payments to authenticated;
 grant select on public.credit_ledger to authenticated;
 
+grant all on public.app_config to postgres, service_role;
+grant all on public.coin_packs to postgres, service_role;
+grant all on public.profiles to postgres, service_role;
+grant all on public.wallets to postgres, service_role;
+grant all on public.payments to postgres, service_role;
+grant all on public.credit_ledger to postgres, service_role;
+grant all on public.paystack_events to postgres, service_role;
+
 revoke all on function public.grant_signup_coins(uuid) from public, anon, authenticated;
 revoke all on function public.create_payment(text, integer, text, text, text, uuid) from public, anon, authenticated;
 revoke all on function public.credit_pack(text, bigint, integer) from public, anon, authenticated;
@@ -622,7 +633,7 @@ grant execute on function public.coins_for_usd_cents(integer) to service_role;
 -- ---------------------------------------------------------------------------
 insert into public.app_config (key, value_int) values
   ('refill_interval_seconds', 43200), -- 12 hours
-  ('refill_capacity', 3),
+  ('refill_capacity', 0),
   ('ip_max_accounts', 3),
   ('consume_min_interval_ms', 2000)
 on conflict (key) do nothing;
@@ -640,7 +651,7 @@ alter table public.wallets
 create table if not exists public.ip_quotas (
   ip_hash text primary key check (ip_hash ~ '^[0-9a-f]{64}$'),
   tokens double precision not null default 0 check (tokens >= 0),
-  capacity integer not null default 3 check (capacity > 0),
+  capacity integer not null default 3 check (capacity >= 0),
   last_refill_at timestamptz not null default now(),
   last_consume_at timestamptz,
   consume_count integer not null default 0 check (consume_count >= 0),
@@ -690,6 +701,11 @@ create table if not exists public.worlds (
   caption text,
   marble_url text,
   pano_url text,
+  generation_mode text not null default 'pano'
+    check (generation_mode in ('pano', 'world')),
+  billing_source text not null default 'credits'
+    check (billing_source in ('credits', 'user_key')),
+  repo_url_norm text,
   is_public boolean not null default true,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -700,6 +716,7 @@ create index if not exists worlds_public_created_idx
 create index if not exists worlds_user_created_idx
   on public.worlds (user_id, created_at desc);
 create unique index if not exists worlds_labs_id_idx on public.worlds (world_labs_id);
+create unique index if not exists worlds_repo_url_norm_idx on public.worlds (repo_url_norm);
 create index if not exists worlds_pending_latest_idx
   on public.worlds (created_at desc)
   where status = 'pending';
@@ -708,6 +725,37 @@ drop trigger if exists worlds_set_updated_at on public.worlds;
 create trigger worlds_set_updated_at
   before update on public.worlds
   for each row execute function public.set_updated_at();
+
+create or replace function public.normalize_repo_url(p_url text)
+returns text
+language sql
+immutable
+as $$
+  select nullif(
+    lower(regexp_replace(regexp_replace(regexp_replace(trim(coalesce(p_url, '')), '/+$', ''), '\.git$', '', 'i'), '/+$', '')),
+    ''
+  );
+$$;
+
+create or replace function public.set_world_repo_url_norm()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  new.repo_url_norm := public.normalize_repo_url(new.repo_url);
+  if new.repo_url_norm is null then
+    raise exception 'invalid_repo' using errcode = '22023';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists worlds_set_repo_url_norm on public.worlds;
+create trigger worlds_set_repo_url_norm
+  before insert or update of repo_url on public.worlds
+  for each row execute function public.set_world_repo_url_norm();
 
 drop trigger if exists ip_quotas_set_updated_at on public.ip_quotas;
 create trigger ip_quotas_set_updated_at
@@ -722,16 +770,28 @@ security definer
 set search_path = public
 as $$
 begin
-  if public.is_service_role() then
+  if public.is_service_role()
+     or current_setting('codessey.rpc_world_write', true) = 'on' then
     return new;
   end if;
   if new.user_id is distinct from old.user_id
      or new.world_labs_id is distinct from old.world_labs_id
+     or new.operation_id is distinct from old.operation_id
+     or new.status is distinct from old.status
+     or new.progress is distinct from old.progress
+     or new.poll_locked_until is distinct from old.poll_locked_until
      or new.splat_url is distinct from old.splat_url
+     or new.thumbnail_url is distinct from old.thumbnail_url
+     or new.caption is distinct from old.caption
+     or new.marble_url is distinct from old.marble_url
      or new.pano_url is distinct from old.pano_url
      or new.repo_url is distinct from old.repo_url
+     or new.repo_url_norm is distinct from old.repo_url_norm
      or new.branch is distinct from old.branch
-     or new.marble_url is distinct from old.marble_url then
+     or new.repo_name is distinct from old.repo_name
+     or new.generation_mode is distinct from old.generation_mode
+     or new.billing_source is distinct from old.billing_source
+     or new.created_at is distinct from old.created_at then
     raise exception 'world_fields_immutable' using errcode = '42501';
   end if;
   return new;
@@ -985,10 +1045,14 @@ begin
 end;
 $$;
 
+drop function if exists public.tick_credits_as(text, uuid, boolean);
+drop function if exists public.tick_credits_as(text, uuid, boolean, integer);
+
 create or replace function public.tick_credits_as(
   p_ip_hash text,
   p_user_id uuid,
-  p_consume boolean
+  p_consume boolean,
+  p_amount integer default 1
 )
 returns table (
   ok boolean,
@@ -1006,19 +1070,14 @@ set search_path = public
 as $$
 declare
   v_uid uuid := p_user_id;
-  v_quota public.ip_quotas%rowtype;
   v_paid integer := 0;
-  v_free integer := 0;
-  v_wait integer := 0;
   v_min_ms integer;
-  v_max_accounts integer;
+  v_amount integer := coalesce(p_amount, 1);
 begin
   if not public.is_service_role() then
     raise exception 'not_authorized' using errcode = '42501';
   end if;
 
-  v_quota := public.refill_ip_quota(p_ip_hash);
-  v_max_accounts := coalesce(public.config_int('ip_max_accounts'), 3);
   v_min_ms := coalesce(public.config_int('consume_min_interval_ms'), 2000);
 
   if v_uid is not null then
@@ -1027,84 +1086,76 @@ begin
       insert into public.wallets (user_id, balance) values (v_uid, 0);
       v_paid := 0;
     end if;
-    insert into public.ip_identities (ip_hash, user_id)
-    values (p_ip_hash, v_uid)
-    on conflict (user_id) do nothing;
-  else
-    v_paid := 0;
   end if;
-
-  v_free := floor(v_quota.tokens)::integer;
-  v_wait := public.seconds_until_free_token(v_quota.tokens, v_quota.capacity);
 
   if not p_consume then
+    if v_uid is null then
+      return query select
+        true, 0, 0, 0, now(), 0, 'none'::text, null::text;
+      return;
+    end if;
     return query select
-      true, v_paid + v_free, v_paid, v_free,
-      now() + make_interval(secs => v_wait), v_wait,
-      case when v_paid > 0 then 'wallet' else 'ip' end, null::text;
+      true, v_paid, v_paid, 0, now(), 0, 'wallet'::text, null::text;
     return;
   end if;
 
-  if v_quota.last_consume_at is not null
-     and extract(epoch from (now() - v_quota.last_consume_at)) * 1000 < v_min_ms then
+  if v_uid is null then
     return query select
-      false, v_paid + v_free, v_paid, v_free,
-      now() + make_interval(secs => v_wait), v_wait, 'ip'::text, 'rate_limited'::text;
+      false, 0, 0, 0, now(), 0, 'none'::text, 'not_authenticated'::text;
     return;
   end if;
 
-  if v_uid is not null and v_paid > 0 then
-    v_paid := v_paid - 1;
-    update public.wallets set balance = v_paid where user_id = v_uid;
-    insert into public.credit_ledger (user_id, delta, reason, balance_after)
-    values (v_uid, -1, 'generate', v_paid);
-    update public.ip_quotas set last_consume_at = now(), consume_count = consume_count + 1
-    where ip_hash = p_ip_hash;
-    v_free := floor((select tokens from public.ip_quotas where ip_hash = p_ip_hash))::integer;
-    v_wait := public.seconds_until_free_token(
-      (select tokens from public.ip_quotas where ip_hash = p_ip_hash), v_quota.capacity);
+  if v_amount <> 1 then
     return query select
-      true, v_paid + v_free, v_paid, v_free,
-      now() + make_interval(secs => v_wait), v_wait, 'wallet'::text, null::text;
+      false, v_paid, v_paid, 0, now(), 0, 'wallet'::text, 'invalid_amount'::text;
     return;
   end if;
 
-  if v_quota.tokens < 1 then
+  if exists (
+    select 1 from public.credit_ledger
+    where user_id = v_uid
+      and reason = 'postcard_download'
+      and created_at > now() - (v_min_ms::text || ' milliseconds')::interval
+  ) then
     return query select
-      false, v_paid + v_free, v_paid, v_free,
-      now() + make_interval(secs => v_wait), v_wait, 'ip'::text, 'insufficient_coins'::text;
+      false, v_paid, v_paid, 0, now(), 0, 'wallet'::text, 'rate_limited'::text;
     return;
   end if;
 
-  v_quota.tokens := v_quota.tokens - 1;
-  update public.ip_quotas
-  set tokens = v_quota.tokens, last_consume_at = now(), consume_count = consume_count + 1
-  where ip_hash = p_ip_hash;
+  if v_paid < v_amount then
+    return query select
+      false, v_paid, v_paid, 0, now(), 0, 'wallet'::text, 'insufficient_coins'::text;
+    return;
+  end if;
 
-  insert into public.ip_quota_events (ip_hash, user_id, delta, reason, tokens_after)
-  values (p_ip_hash, v_uid, -1, 'generate', v_quota.tokens);
-
-  v_free := floor(v_quota.tokens)::integer;
-  v_wait := public.seconds_until_free_token(v_quota.tokens, v_quota.capacity);
+  v_paid := v_paid - v_amount;
+  update public.wallets set balance = v_paid where user_id = v_uid;
+  insert into public.credit_ledger (user_id, delta, reason, balance_after)
+  values (v_uid, -v_amount, 'postcard_download', v_paid);
 
   return query select
-    true, v_paid + v_free, v_paid, v_free,
-    now() + make_interval(secs => v_wait), v_wait, 'ip'::text, null::text;
+    true, v_paid, v_paid, 0, now(), 0, 'wallet'::text, null::text;
 end;
 $$;
+
+drop function if exists public.publish_world(text, text, text, text, text, text, text, text, boolean, uuid);
+drop function if exists public.publish_world(text, text, text, text, text, text, text, text, boolean, uuid, text);
+drop function if exists public.publish_world(text, text, text, text, text, text, text, text, boolean, uuid, text, text, text);
 
 create or replace function public.publish_world(
   p_repo_url text,
   p_branch text,
   p_repo_name text,
   p_world_labs_id text,
-  p_splat_url text,
+  p_splat_url text default null,
   p_thumbnail_url text default null,
   p_caption text default null,
   p_marble_url text default null,
   p_is_public boolean default true,
   p_user_id uuid default null,
-  p_pano_url text default null
+  p_pano_url text default null,
+  p_generation_mode text default 'pano',
+  p_billing_source text default 'credits'
 )
 returns uuid
 language plpgsql
@@ -1114,14 +1165,31 @@ as $$
 declare
   v_id uuid;
   v_uid uuid;
+  v_mode text := coalesce(nullif(trim(p_generation_mode), ''), 'pano');
+  v_billing text := coalesce(nullif(trim(p_billing_source), ''), 'credits');
+  v_splat text := nullif(trim(p_splat_url), '');
+  v_pano text := nullif(trim(p_pano_url), '');
 begin
   if not public.is_service_role() then
     raise exception 'not_authorized' using errcode = '42501';
   end if;
+  perform set_config('codessey.rpc_world_write', 'on', true);
   if p_repo_url is null or length(trim(p_repo_url)) = 0 then
     raise exception 'invalid_repo' using errcode = '22023';
   end if;
-  if p_world_labs_id is null or p_splat_url is null then
+  if p_world_labs_id is null then
+    raise exception 'invalid_world' using errcode = '22023';
+  end if;
+  if v_mode not in ('pano', 'world') then
+    raise exception 'invalid_generation_mode' using errcode = '22023';
+  end if;
+  if v_billing not in ('credits', 'user_key') then
+    raise exception 'invalid_billing_source' using errcode = '22023';
+  end if;
+  if v_mode = 'world' and v_splat is null then
+    raise exception 'invalid_world' using errcode = '22023';
+  end if;
+  if v_mode = 'pano' and v_pano is null then
     raise exception 'invalid_world' using errcode = '22023';
   end if;
 
@@ -1129,19 +1197,25 @@ begin
 
   insert into public.worlds (
     user_id, repo_url, branch, repo_name, world_labs_id, splat_url,
-    thumbnail_url, caption, marble_url, pano_url, is_public
+    thumbnail_url, caption, marble_url, pano_url, is_public,
+    generation_mode, billing_source, status, progress
   ) values (
     v_uid, trim(p_repo_url), coalesce(nullif(trim(p_branch), ''), 'main'),
-    nullif(trim(p_repo_name), ''), trim(p_world_labs_id), trim(p_splat_url),
-    p_thumbnail_url, p_caption, p_marble_url, nullif(trim(p_pano_url), ''),
-    coalesce(p_is_public, true)
+    nullif(trim(p_repo_name), ''), trim(p_world_labs_id), v_splat,
+    p_thumbnail_url, p_caption, p_marble_url, v_pano,
+    coalesce(p_is_public, true), v_mode, v_billing, 'complete', 'World ready.'
   )
-  on conflict (world_labs_id) do update set
-    splat_url = excluded.splat_url,
+  on conflict (repo_url_norm) do update set
+    world_labs_id = excluded.world_labs_id,
+    splat_url = coalesce(excluded.splat_url, public.worlds.splat_url),
     thumbnail_url = coalesce(excluded.thumbnail_url, public.worlds.thumbnail_url),
     caption = coalesce(excluded.caption, public.worlds.caption),
     marble_url = coalesce(excluded.marble_url, public.worlds.marble_url),
     pano_url = coalesce(excluded.pano_url, public.worlds.pano_url),
+    generation_mode = excluded.generation_mode,
+    billing_source = excluded.billing_source,
+    status = 'complete',
+    progress = 'World ready.',
     updated_at = now()
   returning id into v_id;
 
@@ -1149,13 +1223,18 @@ begin
 end;
 $$;
 
+drop function if exists public.pre_save_pending_world(text, text, text, text, uuid, boolean);
+drop function if exists public.pre_save_pending_world(text, text, text, text, uuid, boolean, text, text);
+
 create or replace function public.pre_save_pending_world(
   p_operation_id text,
   p_repo_url text,
   p_branch text,
   p_repo_name text,
   p_user_id uuid default null,
-  p_is_public boolean default true
+  p_is_public boolean default true,
+  p_generation_mode text default 'pano',
+  p_billing_source text default 'credits'
 )
 returns public.worlds
 language plpgsql
@@ -1166,15 +1245,24 @@ declare
   v_row public.worlds%rowtype;
   v_uid uuid;
   v_placeholder text;
+  v_mode text := coalesce(nullif(trim(p_generation_mode), ''), 'pano');
+  v_billing text := coalesce(nullif(trim(p_billing_source), ''), 'credits');
 begin
   if not public.is_service_role() then
     raise exception 'not_authorized' using errcode = '42501';
   end if;
+  perform set_config('codessey.rpc_world_write', 'on', true);
   if p_operation_id is null or length(trim(p_operation_id)) = 0 then
     raise exception 'invalid_operation' using errcode = '22023';
   end if;
   if p_repo_url is null or length(trim(p_repo_url)) = 0 then
     raise exception 'invalid_repo' using errcode = '22023';
+  end if;
+  if v_mode not in ('pano', 'world') then
+    raise exception 'invalid_generation_mode' using errcode = '22023';
+  end if;
+  if v_billing not in ('credits', 'user_key') then
+    raise exception 'invalid_billing_source' using errcode = '22023';
   end if;
 
   v_uid := coalesce(p_user_id, auth.uid());
@@ -1182,7 +1270,7 @@ begin
 
   insert into public.worlds (
     user_id, repo_url, branch, repo_name, world_labs_id, operation_id,
-    splat_url, status, progress, is_public
+    splat_url, status, progress, is_public, generation_mode, billing_source
   ) values (
     v_uid,
     trim(p_repo_url),
@@ -1192,13 +1280,36 @@ begin
     trim(p_operation_id),
     null,
     'pending',
-    'Generating landscape (about 5 minutes)…',
-    coalesce(p_is_public, true)
+    'Generating landscape…',
+    coalesce(p_is_public, true),
+    v_mode,
+    v_billing
   )
-  on conflict (operation_id) do update set
+  on conflict (repo_url_norm) do update set
+    operation_id = excluded.operation_id,
+    world_labs_id = excluded.world_labs_id,
+    branch = excluded.branch,
+    repo_name = coalesce(excluded.repo_name, public.worlds.repo_name),
+    user_id = coalesce(public.worlds.user_id, excluded.user_id),
+    generation_mode = excluded.generation_mode,
+    billing_source = excluded.billing_source,
+    status = 'pending',
     progress = excluded.progress,
+    splat_url = case
+      when excluded.generation_mode = 'world' then null
+      else public.worlds.splat_url
+    end,
+    poll_locked_until = null,
     updated_at = now()
+  where public.worlds.status in ('pending', 'failed')
+     or (public.worlds.generation_mode = 'pano' and excluded.generation_mode = 'world')
   returning * into v_row;
+
+  if not found then
+    select * into v_row
+    from public.worlds
+    where repo_url_norm = public.normalize_repo_url(p_repo_url);
+  end if;
 
   return v_row;
 end;
@@ -1276,10 +1387,14 @@ set search_path = public
 as $$
 declare
   v_row public.worlds%rowtype;
+  v_pano text;
+  v_splat text;
+  v_world_id text;
 begin
   if not public.is_service_role() then
     raise exception 'not_authorized' using errcode = '42501';
   end if;
+  perform set_config('codessey.rpc_world_write', 'on', true);
 
   select * into v_row from public.worlds where id = p_world_id for update;
   if not found then
@@ -1290,10 +1405,18 @@ begin
     return v_row;
   end if;
 
+  v_pano := nullif(trim(p_pano_url), '');
+  v_splat := nullif(trim(p_splat_url), '');
+  v_world_id := nullif(trim(p_world_labs_id), '');
+
   if not coalesce(p_done, false) then
     update public.worlds
     set progress = coalesce(nullif(trim(p_progress), ''), progress),
-        pano_url = coalesce(nullif(trim(p_pano_url), ''), pano_url),
+        pano_url = coalesce(v_pano, pano_url),
+        world_labs_id = case
+          when v_world_id is not null and v_world_id not like 'pending:%' then v_world_id
+          else world_labs_id
+        end,
         poll_locked_until = null
     where id = p_world_id
     returning * into v_row;
@@ -1310,10 +1433,30 @@ begin
     return v_row;
   end if;
 
-  if p_world_labs_id is null or p_splat_url is null then
+  if v_world_id is null then
     update public.worlds
     set status = 'failed',
-        progress = 'World Labs finished without assets.',
+        progress = 'World Labs finished without a world id.',
+        poll_locked_until = null
+    where id = p_world_id
+    returning * into v_row;
+    return v_row;
+  end if;
+
+  if v_row.generation_mode = 'world' and v_splat is null then
+    update public.worlds
+    set status = 'failed',
+        progress = 'World generated but no splat URL was returned yet.',
+        poll_locked_until = null
+    where id = p_world_id
+    returning * into v_row;
+    return v_row;
+  end if;
+
+  if v_row.generation_mode = 'pano' and v_pano is null and v_row.pano_url is null then
+    update public.worlds
+    set status = 'failed',
+        progress = 'World generated but no panorama URL was returned yet.',
         poll_locked_until = null
     where id = p_world_id
     returning * into v_row;
@@ -1323,12 +1466,15 @@ begin
   update public.worlds
   set status = 'complete',
       progress = coalesce(nullif(trim(p_progress), ''), 'World ready.'),
-      world_labs_id = trim(p_world_labs_id),
-      splat_url = trim(p_splat_url),
+      world_labs_id = v_world_id,
+      splat_url = case
+        when v_row.generation_mode = 'pano' then null
+        else coalesce(v_splat, splat_url)
+      end,
       thumbnail_url = coalesce(p_thumbnail_url, thumbnail_url),
       caption = coalesce(p_caption, caption),
       marble_url = coalesce(p_marble_url, marble_url),
-      pano_url = coalesce(nullif(trim(p_pano_url), ''), pano_url),
+      pano_url = coalesce(v_pano, pano_url),
       poll_locked_until = null
   where id = p_world_id
   returning * into v_row;
@@ -1337,7 +1483,37 @@ begin
 end;
 $$;
 
--- Signup no longer mints extra wallet coins (that duplicated the IP bucket).
+create or replace function public.lookup_world_by_repo_url(p_repo_url text)
+returns public.worlds
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  v_row public.worlds%rowtype;
+  v_norm text := public.normalize_repo_url(p_repo_url);
+begin
+  if not public.is_service_role() then
+    raise exception 'not_authorized' using errcode = '42501';
+  end if;
+  if v_norm is null then
+    return null;
+  end if;
+
+  select * into v_row
+  from public.worlds
+  where repo_url_norm = v_norm
+  limit 1;
+
+  if not found then
+    return null;
+  end if;
+  return v_row;
+end;
+$$;
+
+-- Signup mints 2 postcard coins.
 create or replace function public.handle_new_user()
 returns trigger
 language plpgsql
@@ -1353,6 +1529,7 @@ begin
   values (new.id, 0)
   on conflict (user_id) do nothing;
 
+  perform public.grant_signup_coins(new.id);
   return new;
 end;
 $$;
@@ -1370,7 +1547,10 @@ alter table public.worlds enable row level security;
 drop policy if exists worlds_select_visible on public.worlds;
 create policy worlds_select_visible on public.worlds
   for select to anon, authenticated
-  using (is_public = true or user_id = auth.uid());
+  using (
+    (is_public = true and status in ('complete', 'pending'))
+    or user_id = auth.uid()
+  );
 
 drop policy if exists worlds_update_own on public.worlds;
 create policy worlds_update_own on public.worlds
@@ -1385,25 +1565,39 @@ revoke all on public.worlds from anon, authenticated, public;
 
 grant select on public.worlds to anon, authenticated;
 grant update on public.worlds to authenticated;
+grant all on public.worlds to postgres, service_role;
+grant all on public.ip_quotas to postgres, service_role;
+grant all on public.ip_identities to postgres, service_role;
+grant all on public.ip_quota_events to postgres, service_role;
+grant all on public.app_config to postgres, service_role;
+grant all on public.coin_packs to postgres, service_role;
+grant all on public.profiles to postgres, service_role;
+grant all on public.wallets to postgres, service_role;
+grant all on public.payments to postgres, service_role;
+grant all on public.credit_ledger to postgres, service_role;
+grant all on public.paystack_events to postgres, service_role;
 
 revoke all on function public.refill_ip_quota(text) from public, anon, authenticated;
 revoke all on function public.tick_credits(text, boolean) from public, anon, authenticated;
 revoke all on function public.tick_credits_for_user(text, uuid, boolean) from public, anon, authenticated;
-revoke all on function public.tick_credits_as(text, uuid, boolean) from public, anon, authenticated;
-revoke all on function public.publish_world(text, text, text, text, text, text, text, text, boolean, uuid, text) from public, anon, authenticated;
-revoke all on function public.pre_save_pending_world(text, text, text, text, uuid, boolean) from public, anon, authenticated;
+revoke all on function public.tick_credits_as(text, uuid, boolean, integer) from public, anon, authenticated;
+revoke all on function public.publish_world(text, text, text, text, text, text, text, text, boolean, uuid, text, text, text) from public, anon, authenticated;
+revoke all on function public.pre_save_pending_world(text, text, text, text, uuid, boolean, text, text) from public, anon, authenticated;
 revoke all on function public.claim_latest_pending_worlds(integer, uuid, uuid) from public, anon, authenticated;
 revoke all on function public.apply_world_poll_result(uuid, boolean, text, text, text, text, text, text, text, text) from public, anon, authenticated;
+revoke all on function public.lookup_world_by_repo_url(text) from public, anon, authenticated;
 revoke all on function public.protect_world_row() from public, anon, authenticated;
+revoke all on function public.set_world_repo_url_norm() from public, anon, authenticated;
 revoke all on function public.seconds_until_free_token(double precision, integer) from public, anon, authenticated;
 
 grant execute on function public.tick_credits(text, boolean) to service_role;
-grant execute on function public.tick_credits_as(text, uuid, boolean) to service_role;
+grant execute on function public.tick_credits_as(text, uuid, boolean, integer) to service_role;
 grant execute on function public.tick_credits_for_user(text, uuid, boolean) to service_role;
-grant execute on function public.publish_world(text, text, text, text, text, text, text, text, boolean, uuid, text) to service_role;
-grant execute on function public.pre_save_pending_world(text, text, text, text, uuid, boolean) to service_role;
+grant execute on function public.publish_world(text, text, text, text, text, text, text, text, boolean, uuid, text, text, text) to service_role;
+grant execute on function public.pre_save_pending_world(text, text, text, text, uuid, boolean, text, text) to service_role;
 grant execute on function public.claim_latest_pending_worlds(integer, uuid, uuid) to service_role;
 grant execute on function public.apply_world_poll_result(uuid, boolean, text, text, text, text, text, text, text, text) to service_role;
+grant execute on function public.lookup_world_by_repo_url(text) to service_role;
 grant execute on function public.refill_ip_quota(text) to service_role;
 
 -- ===========================================================================
@@ -1505,6 +1699,9 @@ with expected(table_name, column_name, data_type) as (
     ('worlds', 'caption', 'text'),
     ('worlds', 'marble_url', 'text'),
     ('worlds', 'pano_url', 'text'),
+    ('worlds', 'generation_mode', 'text'),
+    ('worlds', 'billing_source', 'text'),
+    ('worlds', 'repo_url_norm', 'text'),
     ('worlds', 'is_public', 'boolean'),
     ('worlds', 'created_at', 'timestamp with time zone'),
     ('worlds', 'updated_at', 'timestamp with time zone')
@@ -1579,7 +1776,9 @@ where g.routine_schema = 'public'
     'get_my_wallet', 'grant_signup_coins', 'record_paystack_event',
     'coins_for_usd_cents', 'config_int', 'is_service_role',
     'tick_credits', 'tick_credits_as', 'tick_credits_for_user',
-    'publish_world', 'refill_ip_quota', 'seconds_until_free_token'
+    'publish_world', 'pre_save_pending_world', 'apply_world_poll_result',
+    'lookup_world_by_repo_url', 'claim_latest_pending_worlds',
+    'refill_ip_quota', 'seconds_until_free_token'
   )
   and g.grantee in ('anon', 'authenticated', 'public', 'service_role')
 order by function, grantee;
@@ -1589,8 +1788,10 @@ order by function, grantee;
 --   service_role:  create_payment, credit_pack, grant_signup_coins,
 --                  record_paystack_event, fail_payment, coins_for_usd_cents,
 --                  tick_credits, tick_credits_as, tick_credits_for_user,
---                  publish_world, refill_ip_quota
---   anon:          none of the money / quota RPCs
+--                  publish_world, pre_save_pending_world, apply_world_poll_result,
+--                  lookup_world_by_repo_url, claim_latest_pending_worlds,
+--                  refill_ip_quota
+--   anon:          none of the money / quota / world-write RPCs
 
 -- ---------------------------------------------------------------------------
 -- 6. Seed catalog (purchase UI + coins_for_usd_cents + quota knobs)
@@ -1605,7 +1806,7 @@ select
   public.coins_for_usd_cents(500) as p10,    -- 10
   public.coins_for_usd_cents(1000) as p20,   -- 20
   public.coins_for_usd_cents(2000) as p40,   -- 40
-  public.coins_for_usd_cents(1500) as custom_15; -- 15
+  public.coins_for_usd_cents(1500) as custom_30; -- 30
 
 -- ---------------------------------------------------------------------------
 -- 7. Pricing / auth mapping used by the app (documentation only)
@@ -1629,4 +1830,4 @@ select
 --     → Inline resumeTransaction(access_code)
 --     → verify/webhook → credit_pack(reference, txn_id, paid_amount)
 --     → amount mismatch raises; already-success is idempotent
---   World ready → apply_world_poll_result(...) (service) → Explore reads public.worlds
+--   World ready → apply_world_poll_result(...) (service) → Explore reads complete public worlds

@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
-import { createSupabaseServerClient, createSupabaseServiceClient } from "@/lib/supabase/server";
-import { getServerWorldLabs } from "@/lib/providers.server";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
 import type { WorldRow } from "@/lib/database.types";
 import { sanitizeWorldSearch } from "@/lib/world-search";
 
@@ -13,7 +12,7 @@ export async function GET(request: Request) {
     let query = supabase
       .from("worlds")
       .select(
-        "id,user_id,repo_url,branch,repo_name,world_labs_id,operation_id,status,progress,splat_url,thumbnail_url,caption,marble_url,pano_url,is_public,created_at,updated_at",
+        "id,user_id,repo_url,repo_url_norm,branch,repo_name,world_labs_id,operation_id,status,progress,splat_url,thumbnail_url,caption,marble_url,pano_url,generation_mode,billing_source,is_public,created_at,updated_at",
       )
       .neq("status", "failed")
       .order("created_at", { ascending: false })
@@ -30,7 +29,7 @@ export async function GET(request: Request) {
       if (!user) return NextResponse.json({ worlds: [] as WorldRow[] });
       query = query.eq("user_id", user.id);
     } else {
-      query = query.eq("is_public", true);
+      query = query.eq("is_public", true).eq("status", "complete");
     }
 
     const { data, error } = await query;
@@ -42,57 +41,6 @@ export async function GET(request: Request) {
   }
 }
 
-export async function POST(request: Request) {
-  try {
-    const body = (await request.json()) as {
-      worldLabsId?: string;
-      repoUrl?: string;
-      branch?: string;
-      repoName?: string;
-      isPublic?: boolean;
-    };
-    const worldLabsId = body.worldLabsId?.trim() ?? "";
-    const repoUrl = body.repoUrl?.trim() ?? "";
-    if (!worldLabsId || !repoUrl) {
-      return NextResponse.json({ error: "Missing world." }, { status: 400 });
-    }
-
-    const world = await getServerWorldLabs().getWorld(worldLabsId);
-    const splat =
-      world.assets?.splats?.spz_urls?.["500k"] ??
-      world.assets?.splats?.spz_urls?.full_res ??
-      world.assets?.splats?.spz_urls?.["100k"];
-    if (!splat) {
-      return NextResponse.json({ error: "World has no splat yet." }, { status: 400 });
-    }
-
-    const session = await createSupabaseServerClient();
-    const {
-      data: { user },
-    } = await session.auth.getUser();
-
-    const admin = createSupabaseServiceClient();
-    const { data, error } = await admin.rpc("publish_world", {
-      p_repo_url: repoUrl,
-      p_branch: body.branch?.trim() || "main",
-      p_repo_name: body.repoName ?? world.display_name,
-      p_world_labs_id: worldLabsId,
-      p_splat_url: splat,
-      p_thumbnail_url: world.assets?.thumbnail_url ?? null,
-      p_caption: world.assets?.caption ?? null,
-      p_marble_url: world.world_marble_url ?? null,
-      p_pano_url: world.assets?.imagery?.pano_url ?? null,
-      p_is_public: body.isPublic !== false,
-      p_user_id: user?.id ?? null,
-    });
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-    return NextResponse.json({ id: data });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Publish failed.";
-    return NextResponse.json({ error: message }, { status: 400 });
-  }
-}
-
 export async function PATCH(request: Request) {
   try {
     const body = (await request.json()) as { id?: string; isPublic?: boolean };
@@ -100,10 +48,17 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ error: "Invalid update." }, { status: 400 });
     }
     const supabase = await createSupabaseServerClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) {
+      return NextResponse.json({ error: "Sign in to update a world." }, { status: 401 });
+    }
     const { error } = await supabase
       .from("worlds")
       .update({ is_public: body.isPublic })
-      .eq("id", body.id);
+      .eq("id", body.id)
+      .eq("user_id", user.id);
     if (error) return NextResponse.json({ error: error.message }, { status: 400 });
     return NextResponse.json({ ok: true });
   } catch (error) {

@@ -49,7 +49,6 @@ jobs:
       PAYSTACK_CURRENCY: USD
       SUPABASE_SERVICE_ROLE_KEY: ci-service-role
       CODEFUNDI_API_KEY: ci-codefundi
-      WORLDLABS_API_KEY: ci-worldlabs
       CREDITS_IP_PEPPER: ci-pepper
     steps:
       - uses: actions/checkout@v4

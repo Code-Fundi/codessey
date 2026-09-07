@@ -3,22 +3,15 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
-import type { Repository } from "@/lib/codefundi.client";
 import type { WorldRow } from "@/lib/database.types";
-import { hasCache, repoCacheKey } from "@/lib/localStorage";
+import { parseGithubOwnerRepo, repoNameFromUrl } from "@/lib/repo-url";
 import { cn } from "@/lib/utils";
-import { RepositoryCard } from "./RepositoryCard";
 
 export type MainTab = "explore" | "repos";
 
 interface RepoPanelProps {
   tab: MainTab;
   onTabChange: (tab: MainTab) => void;
-  repos: Repository[];
-  loading: boolean;
-  loadingMore: boolean;
-  hasMore: boolean;
-  error: string | null;
   worlds: WorldRow[];
   worldsLoading: boolean;
   worldsError: string | null;
@@ -28,24 +21,19 @@ interface RepoPanelProps {
   repoUrl: string;
   branch: string;
   isGenerating: boolean;
-  canGenerate: boolean;
-  onSelect: (repo: Repository) => void;
+  formLocked?: boolean;
   onSelectWorld: (world: WorldRow) => void;
   onRepoUrlChange: (value: string) => void;
   onBranchChange: (value: string) => void;
-  onLoadMore: () => void;
   onSearchWorlds: () => void;
+  onGenerate: () => void;
+  onGenerateNewWorld?: () => void;
 }
 
 export function RepoPanel(props: RepoPanelProps) {
   const {
     tab,
     onTabChange,
-    repos,
-    loading,
-    loadingMore,
-    hasMore,
-    error,
     worlds,
     worldsLoading,
     worldsError,
@@ -55,14 +43,17 @@ export function RepoPanel(props: RepoPanelProps) {
     repoUrl,
     branch,
     isGenerating,
-    canGenerate,
-    onSelect,
+    formLocked = false,
     onSelectWorld,
     onRepoUrlChange,
     onBranchChange,
-    onLoadMore,
     onSearchWorlds,
+    onGenerate,
+    onGenerateNewWorld,
   } = props;
+
+  const inputsDisabled = isGenerating || formLocked;
+  const showNewWorld = formLocked && !isGenerating;
 
   return (
     <aside className="h-full flex flex-col bg-white/[0.04] backdrop-blur-md border-t md:border-t-0 border-r-0 md:border-r border-white/[0.07] p-4 md:p-5">
@@ -87,8 +78,8 @@ export function RepoPanel(props: RepoPanelProps) {
         >
           Indexed Repos
         </button>
-        {(loading || loadingMore || worldsLoading || isGenerating) && (
-          <Loader2 size={12} className="text-green-400 animate-spin" />
+        {(worldsLoading || isGenerating) && (
+          <Loader2 size={12} className="text-blue-400 animate-spin" />
         )}
       </div>
 
@@ -96,52 +87,13 @@ export function RepoPanel(props: RepoPanelProps) {
 
       <div className="flex-1 min-h-0 overflow-y-auto scrollbar-thin -mx-1 px-1">
         {tab === "repos" ? (
-          <>
-            {error && !repos.length && (
-              <div className="text-sm text-red-300/80 p-3 rounded-lg bg-red-500/10 border border-red-500/20">
-                Failed to load repos: {error}
-              </div>
-            )}
-            {loading && !repos.length && (
-              <div className="space-y-2">
-                {Array.from({ length: 6 }).map((_, i) => (
-                  <Skeleton key={i} className="h-16 w-full bg-white/[0.06]" />
-                ))}
-              </div>
-            )}
-            <ul className="space-y-2 p-1">
-              {repos.map((repo, i) => (
-                <li key={repo.id}>
-                  <RepositoryCard
-                    repo={repo}
-                    index={i}
-                    selected={selectedId === repo.id}
-                    cached={hasCache(repoCacheKey(repo.link, repo.branch ?? "main"))}
-                    onSelect={onSelect}
-                  />
-                </li>
-              ))}
-            </ul>
-            {hasMore && (
-              <div className="sticky bottom-0 pt-3 pb-1 bg-gradient-to-t from-[#090C10] to-transparent">
-                <Button
-                  onClick={onLoadMore}
-                  variant="outline"
-                  size="sm"
-                  disabled={loadingMore}
-                  className="w-full bg-transparent border-white/10 text-white/70 hover:bg-white/5 hover:text-white"
-                >
-                  {loadingMore ? (
-                    <>
-                      <Loader2 size={14} className="mr-2 animate-spin" /> Loading…
-                    </>
-                  ) : (
-                    "Load More"
-                  )}
-                </Button>
-              </div>
-            )}
-          </>
+          <div className="px-1 py-2 space-y-3">
+            <p className="text-sm text-white/70">Generate a landscape from a GitHub repository.</p>
+            <p className="text-xs text-white/45 leading-relaxed">
+              Add your World Labs key to generate a landscape. Postcard downloads cost 1 credit
+              after you sign in.
+            </p>
+          </div>
         ) : (
           <>
             <label className="block px-1 pb-3">
@@ -178,7 +130,7 @@ export function RepoPanel(props: RepoPanelProps) {
               {!worldsLoading && !worlds.length && !worldsError && (
                 <li>
                   <p className="text-sm text-white/45 p-3">
-                    No worlds match yet. Search a repo URL below to create one.
+                    No worlds match yet. Open Indexed Repos to generate one.
                   </p>
                 </li>
               )}
@@ -190,23 +142,28 @@ export function RepoPanel(props: RepoPanelProps) {
                     className={cn(
                       "w-full text-left rounded-xl p-3 border transition-colors",
                       selectedId === row.id
-                        ? "border-green-600/80 bg-green-600/20"
+                        ? "border-blue-500/80 bg-blue-600/20"
                         : "border-white/5 bg-white/[0.03] hover:bg-white/[0.06]",
                     )}
                   >
                     <div className="flex items-center gap-2">
-                      {row.thumbnail_url || row.pano_url ? (
+                      {row.pano_url || row.thumbnail_url ? (
                         <img
-                          src={(row.thumbnail_url || row.pano_url) as string}
+                          src={(row.pano_url || row.thumbnail_url) as string}
                           alt=""
                           className="h-10 w-10 rounded-md object-cover"
                         />
                       ) : (
                         <Globe size={16} className="text-white/40" />
                       )}
-                      <div className="min-w-0">
-                        <p className="text-sm font-semibold text-white truncate">
-                          {row.repo_name ?? "World"}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-semibold text-white truncate">
+                            {repoNameFromUrl(row.repo_url) ?? row.repo_name ?? "World"}
+                          </p>
+                        </div>
+                        <p className="text-[11px] text-white/55 truncate">
+                          {parseGithubOwnerRepo(row.repo_url)?.owner ?? "unknown"}
                         </p>
                         <p className="text-[11px] text-white/45 truncate">
                           {row.status === "pending"
@@ -224,46 +181,15 @@ export function RepoPanel(props: RepoPanelProps) {
       </div>
 
       {tab === "explore" && (
-        <div className="pt-4 space-y-3">
-          <div className="grid grid-cols-2 gap-2">
-            <label className="min-w-0">
-              <span className="text-[10px] uppercase tracking-[0.14em] text-white/40 font-medium">
-                Repo URL
-              </span>
-              <Input
-                value={repoUrl}
-                onChange={(e) => onRepoUrlChange(e.target.value)}
-                placeholder="https://github.com/org/repo"
-                disabled={isGenerating}
-                className="mt-1 h-10 bg-black/30 border-white/10 text-white"
-              />
-            </label>
-            <label className="min-w-0">
-              <span className="text-[10px] uppercase tracking-[0.14em] text-white/40 font-medium">
-                Branch
-              </span>
-              <Input
-                value={branch}
-                onChange={(e) => onBranchChange(e.target.value)}
-                placeholder="main"
-                disabled={isGenerating}
-                className="mt-1 h-10 bg-black/30 border-white/10 text-white"
-              />
-            </label>
-          </div>
-
+        <div className="pt-4">
           <Button
             onClick={onSearchWorlds}
-            disabled={isGenerating || (!canGenerate && !worldQuery.trim())}
-            className="w-full h-11 bg-green-700 hover:bg-green-800 text-white font-semibold shadow-[0_8px_32px_-12px_rgba(21,128,61,0.55)] transition-transform hover:scale-[1.01] disabled:opacity-40 disabled:saturate-50 disabled:hover:scale-100"
+            disabled={worldsLoading}
+            className="w-full h-11 bg-blue-700 hover:bg-blue-800 text-white font-semibold shadow-[0_8px_32px_-12px_rgba(37,99,235,0.55)] transition-transform hover:scale-[1.01] disabled:opacity-40 disabled:saturate-50 disabled:hover:scale-100"
           >
-            {isGenerating ? (
+            {worldsLoading ? (
               <>
-                <Loader2 size={16} className="mr-2 animate-spin" /> Generating…
-              </>
-            ) : canGenerate ? (
-              <>
-                <Sparkles size={16} className="mr-2" /> Search Worlds
+                <Loader2 size={16} className="mr-2 animate-spin" /> Searching…
               </>
             ) : (
               <>
@@ -271,6 +197,60 @@ export function RepoPanel(props: RepoPanelProps) {
               </>
             )}
           </Button>
+        </div>
+      )}
+
+      {tab === "repos" && (
+        <div className="pt-4 space-y-3">
+          <label className="block min-w-0">
+            <span className="text-[10px] uppercase tracking-[0.14em] text-white/40 font-medium">
+              Repo URL
+            </span>
+            <Input
+              value={repoUrl}
+              onChange={(e) => onRepoUrlChange(e.target.value)}
+              placeholder="https://github.com/org/repo"
+              disabled={inputsDisabled}
+              className="mt-1 h-10 bg-black/30 border-white/10 text-white"
+            />
+          </label>
+          <label className="block min-w-0">
+            <span className="text-[10px] uppercase tracking-[0.14em] text-white/40 font-medium">
+              Branch
+            </span>
+            <Input
+              value={branch}
+              onChange={(e) => onBranchChange(e.target.value)}
+              placeholder="default"
+              disabled={inputsDisabled}
+              className="mt-1 h-10 bg-black/30 border-white/10 text-white"
+            />
+          </label>
+
+          {showNewWorld ? (
+            <Button
+              onClick={onGenerateNewWorld}
+              className="w-full h-11 bg-amber-600 hover:bg-amber-700 text-white font-semibold shadow-[0_8px_32px_-12px_rgba(217,119,6,0.55)] transition-transform hover:scale-[1.01]"
+            >
+              <Sparkles size={16} className="mr-2" /> Generate New World
+            </Button>
+          ) : (
+            <Button
+              onClick={onGenerate}
+              disabled={isGenerating}
+              className="w-full h-11 bg-blue-700 hover:bg-blue-800 text-white font-semibold shadow-[0_8px_32px_-12px_rgba(37,99,235,0.55)] transition-transform hover:scale-[1.01] disabled:opacity-40 disabled:saturate-50 disabled:hover:scale-100"
+            >
+              {isGenerating ? (
+                <>
+                  <Loader2 size={16} className="mr-2 animate-spin" /> Generating…
+                </>
+              ) : (
+                <>
+                  <Sparkles size={16} className="mr-2" /> Generate World
+                </>
+              )}
+            </Button>
+          )}
         </div>
       )}
     </aside>

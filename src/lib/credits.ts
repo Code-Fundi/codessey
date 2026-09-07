@@ -1,4 +1,5 @@
 import type { CoinPackId } from "@/lib/database.types";
+import { CUSTOM_CENTS_PER_COIN } from "@/lib/generation";
 
 export const PRESET_PACKS: Array<{
   id: Exclude<CoinPackId, "custom">;
@@ -39,5 +40,8 @@ export function resolvePackAmount(
   if (usdCents % 100 !== 0) {
     throw new Error("Custom amount must be a whole dollar amount.");
   }
-  return { usdCents, coins: usdCents / 100, packId: "custom" };
+  if (usdCents % CUSTOM_CENTS_PER_COIN !== 0) {
+    throw new Error("Custom amount must align with the coin rate.");
+  }
+  return { usdCents, coins: usdCents / CUSTOM_CENTS_PER_COIN, packId: "custom" };
 }

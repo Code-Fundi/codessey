@@ -13,6 +13,8 @@ interface BrandCardProps {
   variant?: "about" | "postcard";
   repoName?: string | null;
   imageUrl?: string | null;
+  caption?: string | null;
+  holoIntensity?: number;
 }
 
 const CONTACT_LINKS: {
@@ -50,6 +52,8 @@ export function BrandCard({
   variant = "about",
   repoName,
   imageUrl,
+  caption,
+  holoIntensity = 1,
 }: BrandCardProps) {
   return (
     <div className="perspective-card relative">
@@ -60,7 +64,13 @@ export function BrandCard({
         <div className={cn("card-3d relative", flipped && "is-flipped")}>
           <div className="card-face">
             {variant === "postcard" ? (
-              <PostcardFront repoName={repoName} imageUrl={imageUrl} showHolo={showHolo} />
+              <PostcardFront
+                repoName={repoName}
+                imageUrl={imageUrl}
+                caption={caption}
+                showHolo={showHolo}
+                holoIntensity={holoIntensity}
+              />
             ) : (
               <AboutFront showHolo={showHolo} />
             )}
@@ -74,9 +84,13 @@ export function BrandCard({
   );
 }
 
-function HoloLayers() {
+function HoloLayers({ intensity = 1 }: { intensity?: number }) {
   return (
-    <div className="card-holo-layers pointer-events-none z-[3]" aria-hidden="true">
+    <div
+      className="card-holo-layers pointer-events-none z-[3]"
+      aria-hidden="true"
+      style={{ ["--holo-intensity" as string]: String(intensity) }}
+    >
       <div className="card-holo-rainbow" />
       <div className="card-holo-sparkle" />
       <div className="card-holo-glare" />
@@ -154,45 +168,64 @@ function AboutBack() {
   );
 }
 
-function PostcardFront({
+export function PostcardFront({
   repoName,
   imageUrl,
+  caption,
   showHolo,
+  holoIntensity = 1,
+  flat = false,
 }: {
   repoName?: string | null;
   imageUrl?: string | null;
+  caption?: string | null;
   showHolo: boolean;
+  holoIntensity?: number;
+  flat?: boolean;
 }) {
   const name = (repoName?.trim() || "this repo").replace(/[-_]/g, " ");
 
   return (
-    <div className="relative isolate h-full w-full overflow-hidden rounded-2xl border border-white/15 shadow-[0_30px_80px_-30px_rgba(21,128,61,0.45)] bg-zinc-900">
-      <img
-        src={imageUrl || "/map-bg.jpg"}
-        alt=""
-        draggable={false}
-        className="absolute inset-0 h-full w-full object-cover"
-      />
-      <div className="absolute inset-0 bg-gradient-to-t from-black/55 via-black/15 to-black/10" />
-      <div className="relative z-[2] flex h-full flex-col px-8 py-5">
-        <div className="flex min-h-0 flex-1 flex-col items-center justify-center text-center">
-          <p className="postcard-outline m-0 font-display text-[clamp(1.15rem,3.2vw,1.85rem)] font-extrabold uppercase tracking-[0.18em]">
-            Greetings from
-          </p>
-          <p className="postcard-outline postcard-outline-lg mt-2 m-0 font-display text-[clamp(1.6rem,5vw,2.75rem)] font-extrabold uppercase leading-tight line-clamp-2">
-            {name}
-          </p>
+    <div
+      className={cn(
+        "relative isolate h-full w-full overflow-hidden rounded-2xl border border-white/15 shadow-[0_30px_80px_-30px_rgba(21,128,61,0.45)] bg-[#f4efe4]",
+        flat && "card-postcard-flat",
+      )}
+    >
+      <div className="flex h-full w-full">
+        <div className="relative h-full w-3/4 overflow-hidden bg-zinc-900">
+          <img
+            src={imageUrl || "/map-bg.jpg"}
+            alt=""
+            draggable={false}
+            className="absolute inset-0 h-full w-full object-cover"
+          />
         </div>
-        <div className="shrink-0 text-center">
-          <p className="m-0 font-display text-[30px] sm:text-[33px] font-extrabold uppercase tracking-[0.18em] text-white/90">
-            Codessey
-          </p>
-          <p className="m-0 mt-0.5 text-[10px] sm:text-[11px] font-semibold uppercase tracking-[0.22em] text-white/80">
-            by CodeFundi
-          </p>
+        <div className="relative flex h-full w-1/4 flex-col justify-between border-l border-zinc-300/70 bg-[#f7f1e6] px-3 py-4 sm:px-4 sm:py-5">
+          <div>
+            <p className="m-0 text-[10px] font-semibold uppercase tracking-[0.22em] text-zinc-500">
+              Greetings from
+            </p>
+            <p className="mt-2 m-0 font-display text-[clamp(0.95rem,1.8vw,1.35rem)] font-extrabold uppercase leading-tight text-zinc-900 line-clamp-4">
+              {name}
+            </p>
+            {caption ? (
+              <p className="mt-3 m-0 text-[10px] leading-snug text-zinc-600 line-clamp-5">
+                {caption}
+              </p>
+            ) : null}
+          </div>
+          <div>
+            <p className="m-0 font-display text-sm font-extrabold uppercase tracking-[0.16em] text-zinc-800">
+              Codessey
+            </p>
+            <p className="m-0 mt-0.5 text-[9px] font-semibold uppercase tracking-[0.18em] text-zinc-500">
+              by CodeFundi
+            </p>
+          </div>
         </div>
       </div>
-      {showHolo && <HoloLayers />}
+      {showHolo && <HoloLayers intensity={holoIntensity} />}
     </div>
   );
 }

@@ -1,4 +1,8 @@
+import { asTrimmed } from "@/lib/utils";
+import type { BillingSource, GenerationMode } from "@/lib/generation";
+
 export interface CachedWorld {
+  id?: string;
   worldId: string;
   splatUrl: string;
   thumbnailUrl?: string | null;
@@ -10,12 +14,15 @@ export interface CachedWorld {
   generatedAt: number;
   status?: "pending" | "complete" | "failed";
   progress?: string | null;
+  generationMode?: GenerationMode;
+  billingSource?: BillingSource;
+  repoUrl?: string | null;
 }
 
 const KEY = (id: string) => `codessey:${id}`;
 
 export function repoCacheKey(url: string, branch: string): string {
-  return `${url.trim().toLowerCase()}|${(branch || "main").trim()}`;
+  return `${asTrimmed(url).toLowerCase()}|${asTrimmed(branch, "main") || "main"}`;
 }
 
 export function getCache(repoKey: string): CachedWorld | null {

@@ -1,8 +1,9 @@
 import type { FileListItem, RepositoryIndexInitRepo, RepoIndexFileEntry } from "./codefundi.client";
+import { asTrimmed } from "./utils";
 
 /** GitHub owner from clone URL, e.g. https://github.com/rauchg/blog → rauchg */
 export function parseRepoOwner(repoLink: string): string {
-  const link = repoLink?.trim();
+  const link = asTrimmed(repoLink);
   if (!link) return "owner";
 
   try {
@@ -27,9 +28,24 @@ export function parseRepoOwner(repoLink: string): string {
   return "owner";
 }
 
+export type RepoBlueprint = {
+  url?: string | null;
+  branch?: string | null;
+  description?: string | null;
+  readme?: string | null;
+  conventions?: string | string[] | null;
+  dependencies?: unknown;
+  languages?: unknown;
+  total_files?: number | null;
+  file_count?: number | null;
+};
+
 export type LandscapePromptInput = {
-  index: RepositoryIndexInitRepo;
+  index?: RepositoryIndexInitRepo | null;
   documentedFiles?: FileListItem[];
+  blueprint?: RepoBlueprint | null;
+  repoUrl?: string;
+  branch?: string;
 };
 
 export type CompiledLandscape = {
@@ -120,7 +136,11 @@ function corpus(index: RepositoryIndexInitRepo, documented: FileListItem[]): str
     ...files.slice(0, 120).map((f) => `${f.path} ${f.language ?? ""} ${f.ext}`),
     ...documented
       .slice(0, 40)
-      .flatMap((f) => [f.file_path, f.description ?? "", ...(f.dependencies ?? [])]),
+      .flatMap((f) => [
+        f.file_path,
+        f.description ?? "",
+        ...(f.dependencies ?? []).filter((dep): dep is string => typeof dep === "string"),
+      ]),
   ]
     .join(" ")
     .toLowerCase();
@@ -130,14 +150,18 @@ function collectDependencies(
   files: RepoIndexFileEntry[],
   documented: FileListItem[],
   blob: string,
+  extra: unknown[] = [],
 ): string[] {
   const found = new Set<string>();
+  const consider = (dep: unknown) => {
+    if (typeof dep !== "string") return;
+    const name = dep.trim().toLowerCase();
+    if (name) found.add(name.replace(/^@/, "").split("/").pop() ?? name);
+  };
   for (const item of documented) {
-    for (const dep of item.dependencies ?? []) {
-      const name = dep.trim().toLowerCase();
-      if (name) found.add(name.replace(/^@/, "").split("/").pop() ?? name);
-    }
+    for (const dep of item.dependencies ?? []) consider(dep);
   }
+  for (const dep of extra) consider(dep);
 
   const manifests: [RegExp, string][] = [
     [/package\.json|pnpm-lock|yarn\.lock|package-lock/, "node"],
@@ -408,18 +432,56 @@ function landmarkFor(dep: string): string {
   return map[name] ?? `a distinctive ${name.replace(/[^a-z0-9-]+/g, " ").trim()} landmark hall`;
 }
 
+function blueprintText(blueprint: RepoBlueprint | null | undefined): string {
+  if (!blueprint) return "";
+  const conventions = Array.isArray(blueprint.conventions)
+    ? blueprint.conventions.filter((item): item is string => typeof item === "string").join(" ")
+    : typeof blueprint.conventions === "string"
+      ? blueprint.conventions
+      : "";
+  return [blueprint.description ?? "", blueprint.readme ?? "", conventions].join(" ");
+}
+
+function blueprintDeps(blueprint: RepoBlueprint | null | undefined): unknown[] {
+  const raw = blueprint?.dependencies;
+  if (Array.isArray(raw)) return raw;
+  if (raw && typeof raw === "object") return Object.keys(raw as Record<string, unknown>);
+  return [];
+}
+
+function indexFromInput(input: LandscapePromptInput): RepositoryIndexInitRepo {
+  if (input.index) return input.index;
+  const url =
+    asTrimmed(input.blueprint?.url) || asTrimmed(input.repoUrl) || "https://github.com/owner/repo";
+  const branch =
+    asTrimmed(input.blueprint?.branch, "main") || asTrimmed(input.branch, "main") || "main";
+  const total = input.blueprint?.total_files ?? input.blueprint?.file_count ?? null;
+  return {
+    url,
+    branch,
+    data_source_id: null,
+    total_files: total,
+    description:
+      asTrimmed(input.blueprint?.description) ||
+      asTrimmed(input.blueprint?.readme).slice(0, 280) ||
+      null,
+    files: { tree: null, index: [] },
+  };
+}
+
 /**
- * Deterministic scene from a CodeFundi index (+ optional documented file list).
+ * Deterministic scene from a CodeFundi index and/or blueprint.
  * Same payload always yields the same world; different trees/deps/langs do not.
  */
 export function compileLandscapeScene(input: LandscapePromptInput): CompiledLandscape {
-  const { index, documentedFiles = [] } = input;
+  const { documentedFiles = [], blueprint = null } = input;
+  const index = indexFromInput(input);
   const files = indexFiles(index);
   const fileCount = index.total_files ?? files.length;
   const langs = languageCounts(files);
   const folders = folderCounts(files);
-  const blob = corpus(index, documentedFiles);
-  const deps = collectDependencies(files, documentedFiles, blob);
+  const blob = `${corpus(index, documentedFiles)} ${blueprintText(blueprint)}`.toLowerCase();
+  const deps = collectDependencies(files, documentedFiles, blob, blueprintDeps(blueprint));
   const name =
     index.url
       .split("/")
@@ -432,6 +494,7 @@ export function compileLandscapeScene(input: LandscapePromptInput): CompiledLand
     placeName,
     index.branch ?? "",
     index.description ?? "",
+    blueprintText(blueprint).slice(0, 200),
     String(fileCount),
     langs.map((l) => `${l.lang}:${l.count}`).join(","),
     folders.map((f) => `${f.folder}:${f.count}`).join(","),
@@ -465,7 +528,7 @@ export function compileLandscapeScene(input: LandscapePromptInput): CompiledLand
     .filter(Boolean);
 
   const prompt = [
-    "Explorable outdoor landscape, persistent 3D world, ground plane and open sky, walkable terrain.",
+    "Explorable outdoor landscape, ground plane and open sky, walkable terrain.",
     "Not an indoor office, not a UI mockup, not a HUD, not a product render.",
     `Place inspired by ${placeName}.`,
     `Settlement: ${scale} of about ${buildingCount} buildings, ${skyline}.`,
@@ -475,6 +538,9 @@ export function compileLandscapeScene(input: LandscapePromptInput): CompiledLand
     districts.length ? `Districts from the repo tree: ${districts.join("; ")}.` : "",
     landmarks.length ? `Landmarks from CodeFundi stack/dependencies: ${landmarks.join("; ")}.` : "",
     essence ? `Atmosphere from the CodeFundi description: ${essence}.` : "",
+    blueprint?.readme
+      ? `Notes from the CodeFundi blueprint README: ${cleanText(blueprint.readme, 220)}.`
+      : "",
     languages ? `Material accents follow languages ${languages}.` : "",
     folderSummary ? `Top-level areas ${folderSummary}.` : "",
     documentedNotes.length ? `File notes from CodeFundi: ${documentedNotes.join("; ")}.` : "",
@@ -504,11 +570,27 @@ export function compileLandscapeScene(input: LandscapePromptInput): CompiledLand
 
 /**
  * World Labs text prompts max out at 2000 characters and must describe a place.
- * The CodeFundi index (and optional documented file list) is compiled into the scene.
+ * The CodeFundi index and/or blueprint is compiled into the scene.
  */
 export function buildLandscapePrompt(
-  index: RepositoryIndexInitRepo,
+  index: RepositoryIndexInitRepo | LandscapePromptInput,
   documentedFiles?: FileListItem[],
 ): string {
-  return compileLandscapeScene({ index, documentedFiles }).prompt;
+  if (index && typeof index === "object" && "url" in index && "files" in index) {
+    return compileLandscapeScene({
+      index: index as RepositoryIndexInitRepo,
+      documentedFiles,
+    }).prompt;
+  }
+  return compileLandscapeScene(index as LandscapePromptInput).prompt;
+}
+
+export function hasBlueprintPayload(blueprint: RepoBlueprint | null | undefined): boolean {
+  if (!blueprint) return false;
+  if (asTrimmed(blueprint.readme) || asTrimmed(blueprint.description)) return true;
+  if (blueprintDeps(blueprint).length > 0) return true;
+  if (typeof blueprint.conventions === "string" && blueprint.conventions.trim()) return true;
+  if (Array.isArray(blueprint.conventions) && blueprint.conventions.length > 0) return true;
+  if ((blueprint.total_files ?? blueprint.file_count ?? 0) > 0) return true;
+  return false;
 }

@@ -1,3 +1,5 @@
+import { WORLDLABS_BASE_URL } from "@/lib/api";
+
 export interface WorldLabsConfig {
   baseUrl?: string;
   apiKey: string;
@@ -79,7 +81,7 @@ export class WorldLabsAPIClient {
   private readonly apiKey: string;
 
   constructor(config: WorldLabsConfig) {
-    this.baseUrl = (config.baseUrl ?? "https://api.worldlabs.ai/marble/v1").replace(/\/$/, "");
+    this.baseUrl = (config.baseUrl ?? WORLDLABS_BASE_URL).replace(/\/$/, "");
     this.apiKey = config.apiKey;
   }
 
@@ -163,7 +165,12 @@ export class WorldLabsAPIClient {
   }
 
   async getWorld(worldId: string): Promise<World> {
-    return this.makeRequest<World>(`worlds/${worldId}`, { method: "GET" });
+    const body = await this.makeRequest<unknown>(`worlds/${worldId}`, { method: "GET" });
+    const world = unwrapWorld(body);
+    if (!world) {
+      throw new WorldLabsAPIError("World Labs returned an empty world.", 500, body);
+    }
+    return world;
   }
 
   async listWorlds(): Promise<World[]> {
@@ -187,6 +194,56 @@ export class WorldLabsAPIClient {
   getPanoUrl(world: World | null | undefined): string | null {
     return world?.assets?.imagery?.pano_url ?? null;
   }
+}
+
+export function unwrapWorld(body: unknown): World | null {
+  if (!body || typeof body !== "object") return null;
+  const record = body as Record<string, unknown>;
+  const nested =
+    record.world && typeof record.world === "object" && !Array.isArray(record.world)
+      ? (record.world as Record<string, unknown>)
+      : record;
+  const id =
+    (typeof nested.id === "string" && nested.id) ||
+    (typeof nested.world_id === "string" && nested.world_id) ||
+    "";
+  if (!id && !nested.assets && !nested.display_name && !nested.world_marble_url) {
+    return null;
+  }
+  return nested as unknown as World;
+}
+
+export function isOperationComplete(operation: Operation): boolean {
+  if (operation.done) return true;
+  const status = operation.metadata?.progress?.status?.toUpperCase() ?? "";
+  return status === "SUCCEEDED" || status === "FAILED";
+}
+
+export function splatUrlFromWorld(world: World | null | undefined): string | null {
+  const urls = world?.assets?.splats?.spz_urls;
+  if (!urls) return null;
+  return urls["500k"] ?? urls.full_res ?? urls["100k"] ?? null;
+}
+
+export function panoUrlFromWorld(world: World | null | undefined): string | null {
+  return world?.assets?.imagery?.pano_url ?? null;
+}
+
+export function worldIdFromOperation(
+  operation: Operation,
+  world: World | null | undefined,
+): string | null {
+  const unwrapped = unwrapWorld(world) ?? unwrapWorld(operation.response);
+  return (
+    unwrapped?.world_id ??
+    unwrapped?.id ??
+    world?.world_id ??
+    world?.id ??
+    operation.response?.world_id ??
+    operation.response?.id ??
+    operation.metadata?.world_id ??
+    null
+  );
 }
 
 export function createWorldLabsClient(config: WorldLabsConfig): WorldLabsAPIClient {

@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { Twitter, Linkedin, Github, Coins } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AboutModal } from "./AboutModal";
@@ -10,17 +12,27 @@ interface HeaderProps {
   creditsOpen: boolean;
   creditsReason: CreditsDialogReason;
   onCreditsOpenChange: (open: boolean, reason?: CreditsDialogReason) => void;
+  onPurchased?: () => void;
 }
 
-export function Header({ creditsOpen, creditsReason, onCreditsOpenChange }: HeaderProps) {
+export function Header({
+  creditsOpen,
+  creditsReason,
+  onCreditsOpenChange,
+  onPurchased,
+}: HeaderProps) {
   const { user, balance, secondsUntilRefresh, refresh } = useWallet();
+  const pathname = usePathname();
 
   return (
     <header className="fixed top-0 inset-x-0 h-14 z-40 flex items-center justify-between px-5 surface backdrop-blur-md">
       <div className="flex items-center gap-2">
-        <span className="font-display text-xl font-extrabold tracking-tight gradient-text">
-          Codessey
-        </span>
+        <Link
+          href="/"
+          className="font-display text-xl font-extrabold tracking-[0.18em] gradient-text"
+        >
+          CODESSEY
+        </Link>
       </div>
 
       <div className="flex items-center gap-2">
@@ -76,7 +88,11 @@ export function Header({ creditsOpen, creditsReason, onCreditsOpenChange }: Head
         signedIn={Boolean(user)}
         reason={creditsReason}
         secondsUntilRefresh={secondsUntilRefresh}
-        onPurchased={() => void refresh()}
+        onPurchased={() => {
+          void refresh();
+          onPurchased?.();
+        }}
+        nextPath={pathname}
       />
     </header>
   );

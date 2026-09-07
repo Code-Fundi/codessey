@@ -60,7 +60,7 @@ describe("buildLandscapePrompt", () => {
 
   it("embeds the CodeFundi description and file count", () => {
     const prompt = buildLandscapePrompt(frontend);
-    expect(prompt).toMatch(/walkable world/);
+    expect(prompt).toMatch(/walkable terrain/);
     expect(prompt).toMatch(/40 files/);
     expect(prompt).toMatch(/tsx:/);
   });
@@ -172,5 +172,39 @@ describe("buildLandscapePrompt", () => {
       }),
     );
     expect(a).not.toBe(b);
+  });
+
+  it("does not throw when CodeFundi dependencies are objects", () => {
+    const documented: FileListItem[] = [
+      {
+        id: "1",
+        file_name: "page.tsx",
+        file_path: "src/app/page.tsx",
+        file_branch: "main",
+        file_size_kb: 12,
+        description: "Home canvas",
+        dependencies: [{ name: "react" } as never],
+        created_at: "2026-01-01T00:00:00.000Z",
+      },
+    ];
+    expect(() =>
+      compileLandscapeScene({ index: frontend, documentedFiles: documented }),
+    ).not.toThrow();
+  });
+
+  it("compiles a blueprint without an index", () => {
+    const scene = compileLandscapeScene({
+      repoUrl: "https://github.com/acme/notes",
+      branch: "main",
+      blueprint: {
+        readme: "A personal markdown garden with react and next.",
+        description: "Notes you can walk",
+        dependencies: ["react", "next"],
+        total_files: 22,
+      },
+    });
+    expect(scene.prompt).toMatch(/outdoor landscape/i);
+    expect(scene.prompt).toMatch(/blueprint README|Notes you can walk/);
+    expect(scene.landmarks.join(" ")).toMatch(/gallery|balcony/i);
   });
 });

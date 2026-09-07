@@ -8,15 +8,18 @@
  *   payments.id              → credit_ledger.payment_id (pack_purchase)
  *   payments.reference       → Paystack initialize/verify/webhook + paystack_events.reference
  *   Paystack amount (cents)  → credit_pack(p_paid_amount) must equal payments.amount
- *   app_config.free_gen_coins / refill_* → IP leaky bucket (ip_quotas), not signup mints
+ *   app_config.free_gen_coins → signup grant (2 postcard coins)
+ *   app_config.refill_* → unused for display; unauthed balance is 0
  *
  * Frontend (anon/public key + user JWT):
  *   SELECT  app_config, coin_packs, own profiles/wallets/payments/credit_ledger,
- *           public worlds (and own non-public)
+ *           complete public worlds and own rows
+ *   UPDATE  own worlds.is_public (protect_world_row blocks asset/identity columns)
  *   RPC     consume_coin, fail_payment, get_my_wallet, coins_for_usd_cents
  *
  * Service role only:
- *   create_payment, credit_pack, record_paystack_event, tick_credits_as, publish_world
+ *   lookup_world_by_repo_url, pre_save_pending_world, apply_world_poll_result,
+ *   publish_world, tick_credits_as, create_payment, credit_pack, record_paystack_event
  *   paystack_events + ip_* writes — no anon/authenticated policies
  *
  * See supabase/schema-dry-run.sql to initialize the database and verify columns, RLS, and grants.
@@ -24,7 +27,7 @@
 
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[];
 
-export type LedgerReason = "signup_grant" | "pack_purchase" | "generate";
+export type LedgerReason = "signup_grant" | "pack_purchase" | "generate" | "postcard_download";
 export type PaymentStatus = "pending" | "success" | "failed" | "abandoned";
 export type CoinPackAccent = "amber" | "emerald" | "violet";
 export type CoinPackId = "p10" | "p20" | "p40" | "custom";
@@ -98,11 +101,14 @@ export interface PaystackEventRow {
 }
 
 export type WorldStatus = "pending" | "complete" | "failed";
+export type WorldGenerationMode = "pano" | "world";
+export type WorldBillingSource = "credits" | "user_key";
 
 export interface WorldRow {
   id: string;
   user_id: string | null;
   repo_url: string;
+  repo_url_norm?: string | null;
   branch: string;
   repo_name: string | null;
   world_labs_id: string;
@@ -114,6 +120,8 @@ export interface WorldRow {
   caption: string | null;
   marble_url: string | null;
   pano_url: string | null;
+  generation_mode?: WorldGenerationMode;
+  billing_source?: WorldBillingSource;
   is_public: boolean;
   created_at: string;
   updated_at: string;
@@ -168,7 +176,12 @@ export interface Database {
     Views: Record<string, never>;
     Functions: {
       tick_credits_as: {
-        Args: { p_ip_hash: string; p_user_id: string | null; p_consume: boolean };
+        Args: {
+          p_ip_hash: string;
+          p_user_id: string | null;
+          p_consume: boolean;
+          p_amount?: number;
+        };
         Returns: CreditTickRow[];
       };
       publish_world: {
@@ -177,13 +190,15 @@ export interface Database {
           p_branch: string;
           p_repo_name: string;
           p_world_labs_id: string;
-          p_splat_url: string;
+          p_splat_url?: string | null;
           p_thumbnail_url?: string | null;
           p_caption?: string | null;
           p_marble_url?: string | null;
           p_is_public?: boolean;
           p_user_id?: string | null;
           p_pano_url?: string | null;
+          p_generation_mode?: WorldGenerationMode;
+          p_billing_source?: WorldBillingSource;
         };
         Returns: string;
       };
@@ -195,6 +210,8 @@ export interface Database {
           p_repo_name: string;
           p_user_id?: string | null;
           p_is_public?: boolean;
+          p_generation_mode?: WorldGenerationMode;
+          p_billing_source?: WorldBillingSource;
         };
         Returns: WorldRow;
       };
@@ -205,6 +222,10 @@ export interface Database {
           p_world_id?: string | null;
         };
         Returns: WorldRow[];
+      };
+      lookup_world_by_repo_url: {
+        Args: { p_repo_url: string };
+        Returns: WorldRow | null;
       };
       apply_world_poll_result: {
         Args: {

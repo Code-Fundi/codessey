@@ -27,7 +27,11 @@ function mapTick(row: TickRow | undefined): CreditTick {
   };
 }
 
-export async function tickCredits(request: Request, consume: boolean): Promise<CreditTick> {
+export async function tickCredits(
+  request: Request,
+  consume: boolean,
+  amount = 1,
+): Promise<CreditTick> {
   const ipHash = hashIp(getRequestIp(request));
   let userId: string | null = null;
   try {
@@ -45,6 +49,7 @@ export async function tickCredits(request: Request, consume: boolean): Promise<C
     p_ip_hash: ipHash,
     p_user_id: userId,
     p_consume: consume,
+    p_amount: amount,
   });
   if (error) {
     throw new Error(error.message);

@@ -2,6 +2,7 @@
 
 import type { LucideIcon } from "lucide-react";
 import { Briefcase, Code, Mail } from "lucide-react";
+import { withUtm } from "@/lib/utm";
 import { cn } from "@/lib/utils";
 
 interface BrandCardProps {
@@ -14,6 +15,7 @@ interface BrandCardProps {
   repoName?: string | null;
   imageUrl?: string | null;
   caption?: string | null;
+  signatureSrc?: string | null;
   holoIntensity?: number;
 }
 
@@ -53,6 +55,7 @@ export function BrandCard({
   repoName,
   imageUrl,
   caption,
+  signatureSrc,
   holoIntensity = 1,
 }: BrandCardProps) {
   return (
@@ -68,6 +71,7 @@ export function BrandCard({
                 repoName={repoName}
                 imageUrl={imageUrl}
                 caption={caption}
+                signatureSrc={signatureSrc}
                 showHolo={showHolo}
                 holoIntensity={holoIntensity}
               />
@@ -113,7 +117,7 @@ function AboutFront({ showHolo }: { showHolo: boolean }) {
             {CONTACT_LINKS.map(({ href, label, icon: Icon, external }) => (
               <a
                 key={href}
-                href={href}
+                href={withUtm(href)}
                 aria-label={label}
                 {...(external ? { target: "_blank", rel: "noopener noreferrer" } : {})}
                 onClick={(event) => event.stopPropagation()}
@@ -172,6 +176,7 @@ export function PostcardFront({
   repoName,
   imageUrl,
   caption,
+  signatureSrc,
   showHolo,
   holoIntensity = 1,
   flat = false,
@@ -179,6 +184,7 @@ export function PostcardFront({
   repoName?: string | null;
   imageUrl?: string | null;
   caption?: string | null;
+  signatureSrc?: string | null;
   showHolo: boolean;
   holoIntensity?: number;
   flat?: boolean;
@@ -200,6 +206,20 @@ export function PostcardFront({
             draggable={false}
             className="absolute inset-0 h-full w-full object-cover"
           />
+          {signatureSrc ? (
+            <img
+              src={signatureSrc}
+              alt=""
+              draggable={false}
+              className="pointer-events-none absolute z-[2] w-[min(36%,9.5rem)] max-h-[28%] object-contain object-center select-none"
+              style={{
+                left: "33%",
+                top: "33%",
+                transform: "translate(-50%, -50%) rotate(-11deg)",
+                transformOrigin: "center",
+              }}
+            />
+          ) : null}
         </div>
         <div className="relative flex h-full w-1/4 flex-col justify-between border-l border-zinc-300/70 bg-[#f7f1e6] px-3 py-4 sm:px-4 sm:py-5">
           <div>

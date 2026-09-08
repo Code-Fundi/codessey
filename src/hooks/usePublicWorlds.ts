@@ -2,7 +2,9 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { WorldRow } from "@/lib/database.types";
+import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { sanitizeWorldSearch } from "@/lib/world-search";
+import { WORLD_SELECT } from "@/lib/worlds.client";
 
 export function usePublicWorlds(enabled: boolean, query = "") {
   const [worlds, setWorlds] = useState<WorldRow[]>([]);
@@ -12,25 +14,31 @@ export function usePublicWorlds(enabled: boolean, query = "") {
   const refetch = useCallback(() => {
     if (!enabled) return;
     const q = sanitizeWorldSearch(query);
-    const url = q ? `/api/worlds?q=${encodeURIComponent(q)}` : "/api/worlds";
     setLoading(true);
     setError(null);
-    fetch(url)
-      .then(async (res) => {
-        const body = (await res.json()) as { worlds?: WorldRow[]; error?: string };
-        if (!res.ok) throw new Error(body.error || "Failed to load worlds.");
-        return body.worlds ?? [];
-      })
-      .then((rows) => {
-        setWorlds(rows);
-      })
-      .catch((err: unknown) => {
+    void (async () => {
+      try {
+        const supabase = createSupabaseBrowserClient();
+        let request = supabase
+          .from("worlds")
+          .select(WORLD_SELECT)
+          .eq("is_public", true)
+          .eq("status", "complete")
+          .order("created_at", { ascending: false })
+          .limit(40);
+        if (q) {
+          request = request.or(`repo_name.ilike.%${q}%,repo_url.ilike.%${q}%,caption.ilike.%${q}%`);
+        }
+        const { data, error: queryError } = await request;
+        if (queryError) throw new Error(queryError.message);
+        setWorlds((data ?? []) as WorldRow[]);
+      } catch (err: unknown) {
         setWorlds([]);
         setError(err instanceof Error ? err.message : "Failed to load worlds.");
-      })
-      .finally(() => {
+      } finally {
         setLoading(false);
-      });
+      }
+    })();
   }, [enabled, query]);
 
   useEffect(() => {

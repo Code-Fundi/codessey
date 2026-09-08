@@ -6,28 +6,35 @@
  *   coin_packs.usd_cents     → payments.amount (preset) via resolvePackAmount + coins_for_usd_cents()
  *   coins_for_usd_cents()    → payments.pack_size (never client-supplied)
  *   payments.id              → credit_ledger.payment_id (pack_purchase)
- *   payments.reference       → Paystack initialize/verify/webhook + paystack_events.reference
+ *   payments.reference       → Paystack webhook + paystack_events.reference
  *   Paystack amount (cents)  → credit_pack(p_paid_amount) must equal payments.amount
- *   app_config.free_gen_coins → signup grant (2 postcard coins)
+ *   app_config.free_gen_coins → signup grant (2 coins)
  *   app_config.refill_* → unused for display; unauthed balance is 0
  *
  * Frontend (anon/public key + user JWT):
  *   SELECT  app_config, coin_packs, own profiles/wallets/payments/credit_ledger,
- *           complete public worlds and own rows
- *   UPDATE  own worlds.is_public (protect_world_row blocks asset/identity columns)
- *   RPC     consume_coin, fail_payment, get_my_wallet, coins_for_usd_cents
+ *           complete public worlds and own rows, world_signatures, ranking snapshots
+ *   UPDATE  own worlds.is_public (protect_world_row blocks asset/identity/plaque columns)
+ *   RPC     get_my_wallet, create_my_payment, fail_payment, coins_for_usd_cents,
+ *           lookup/pre_save/apply, sign_guestbook, buy_founder_plaque,
+ *           record_world_visit, snapshot_world_rankings
  *
  * Service role only:
- *   lookup_world_by_repo_url, pre_save_pending_world, apply_world_poll_result,
  *   publish_world, tick_credits_as, create_payment, credit_pack, record_paystack_event
- *   paystack_events + ip_* writes — no anon/authenticated policies
+ *   paystack_events + ip_* + world_visits writes — no anon/authenticated policies
  *
  * See supabase/schema-dry-run.sql to initialize the database and verify columns, RLS, and grants.
  */
 
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[];
 
-export type LedgerReason = "signup_grant" | "pack_purchase" | "generate" | "postcard_download";
+export type LedgerReason =
+  | "signup_grant"
+  | "pack_purchase"
+  | "generate"
+  | "postcard_download"
+  | "guestbook_sign"
+  | "founder_plaque";
 export type PaymentStatus = "pending" | "success" | "failed" | "abandoned";
 export type CoinPackAccent = "amber" | "emerald" | "violet";
 export type CoinPackId = "p10" | "p20" | "p40" | "custom";
@@ -50,6 +57,7 @@ export interface CoinPackRow {
 export interface ProfileRow {
   id: string;
   email: string;
+  github_username: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -123,8 +131,57 @@ export interface WorldRow {
   generation_mode?: WorldGenerationMode;
   billing_source?: WorldBillingSource;
   is_public: boolean;
+  discovered_by?: string | null;
+  plaque_at?: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface WorldSignatureRow {
+  id: string;
+  world_id: string;
+  user_id: string;
+  github_username: string;
+  message: string;
+  signature_png: string;
+  created_at: string;
+}
+
+export interface WorldRankingSnapshotRow {
+  id: string;
+  world_id: string;
+  visit_count: number;
+  signature_count: number;
+  rank_visits: number;
+  rank_populated: number;
+  snapshot_at: string;
+  is_stale: boolean;
+}
+
+export interface SignGuestbookResult {
+  ok: boolean;
+  balance: number;
+  error: string | null;
+  already_signed: boolean;
+  github_username: string | null;
+  message: string | null;
+  signature_png: string | null;
+}
+
+export interface BuyPlaqueResult {
+  ok: boolean;
+  balance: number;
+  error: string | null;
+  discovered_by: string | null;
+}
+
+export interface CreateMyPaymentResult {
+  reference: string;
+  amount: number;
+  coins: number;
+  pack_id: string;
+  email: string;
+  currency: string;
 }
 
 export interface CreditTickRow {
@@ -172,6 +229,12 @@ export interface Database {
       credit_ledger: Table<CreditLedgerRow, CreditLedgerRow, Partial<CreditLedgerRow>>;
       paystack_events: Table<PaystackEventRow, PaystackEventRow, Partial<PaystackEventRow>>;
       worlds: Table<WorldRow, WorldRow, Partial<WorldRow>>;
+      world_signatures: Table<WorldSignatureRow, WorldSignatureRow, Partial<WorldSignatureRow>>;
+      world_ranking_snapshots: Table<
+        WorldRankingSnapshotRow,
+        WorldRankingSnapshotRow,
+        Partial<WorldRankingSnapshotRow>
+      >;
     };
     Views: Record<string, never>;
     Functions: {
@@ -242,6 +305,20 @@ export interface Database {
         };
         Returns: WorldRow;
       };
+      create_my_payment: {
+        Args: { p_pack_id: string; p_custom_cents?: number | null };
+        Returns: CreateMyPaymentResult[];
+      };
+      sign_guestbook: {
+        Args: { p_world_id: string; p_signature: string; p_message: string };
+        Returns: SignGuestbookResult[];
+      };
+      buy_founder_plaque: {
+        Args: { p_world_id: string };
+        Returns: BuyPlaqueResult[];
+      };
+      record_world_visit: { Args: { p_world_id: string }; Returns: undefined };
+      snapshot_world_rankings: { Args: Record<PropertyKey, never>; Returns: undefined };
       create_payment: {
         Args: {
           p_reference: string;

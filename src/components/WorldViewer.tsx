@@ -1,25 +1,29 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
-import { ExternalLink, Image as ImageIcon, Loader2, Map } from "lucide-react";
+import { ExternalLink, Link2, Loader2, Map, PenLine, Award } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { PostcardFront } from "@/components/BrandCard";
+import { GuestbookSignDialog } from "@/components/GuestbookSignDialog";
 import { PostcardModal } from "@/components/PostcardModal";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useWallet } from "@/hooks/useWallet";
 import { ownerRepoHeading, viewerMedia } from "@/lib/cached-world";
-import type { CreditTick } from "@/lib/credit-status";
-import { POSTCARD_COINS } from "@/lib/generation";
+import type { CreditsDialogReason } from "@/components/CreditPurchaseDialog";
+import { PLAQUE_COINS } from "@/lib/generation";
 import type { CachedWorld } from "@/lib/localStorage";
 import { proxiedPanoSrc } from "@/lib/pano-proxy";
+import { EXPORT_HOLO_VARS, preloadPostcardAssets, rasterizePostcard } from "@/lib/postcard-export";
+import { firstRpcRow } from "@/lib/rpc";
 import {
-  EXPORT_HOLO_VARS,
-  filenameForPostcard,
-  openBlobInNewTab,
-  openExportTab,
-  preloadPostcardAssets,
-  rasterizePostcard,
-} from "@/lib/postcard-export";
+  codesseyShareText,
+  codesseyShareUrl,
+  facebookShareHref,
+  twitterShareHref,
+} from "@/lib/share";
+import { createSupabaseBrowserClient } from "@/lib/supabase/client";
+import type { BuyPlaqueResult, SignGuestbookResult } from "@/lib/database.types";
 
 interface WorldViewerProps {
   world: CachedWorld | null;
@@ -29,8 +33,9 @@ interface WorldViewerProps {
   repoName?: string | null;
   retryNonce?: number;
   onNeedSignIn: () => void;
-  onNeedCredits: () => void;
+  onNeedCredits: (reason?: CreditsDialogReason) => void;
   onConsumed: () => void;
+  onPlaqueClaimed?: (discoveredBy: string) => void;
 }
 
 export function WorldViewer({
@@ -43,11 +48,14 @@ export function WorldViewer({
   onNeedSignIn,
   onNeedCredits,
   onConsumed,
+  onPlaqueClaimed,
 }: WorldViewerProps) {
   const { user } = useWallet();
   const exportRef = useRef<HTMLDivElement>(null);
   const [postcardOpen, setPostcardOpen] = useState(false);
+  const [guestbookOpen, setGuestbookOpen] = useState(false);
   const [capturedUrl, setCapturedUrl] = useState<string | null>(null);
+  const [signatureSrc, setSignatureSrc] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const lastRetry = useRef(0);
   const pendingRetry = useRef(false);
@@ -59,63 +67,120 @@ export function WorldViewer({
   const heading = ownerRepoHeading(repoUrl ?? world?.repoUrl, repoName ?? world?.repoName);
   const imageUrl = proxiedPanoSrc(world?.panoUrl) ?? world?.thumbnailUrl ?? null;
   const canDownload = Boolean(splatUrl || panoUrl) && !isGenerating && world?.status !== "pending";
+  const canClaimPlaque =
+    Boolean(user) &&
+    world?.status === "complete" &&
+    Boolean(world.userId) &&
+    world.userId === user?.id &&
+    !world.discoveredBy;
+  const shareSource = repoUrl ?? world?.repoUrl ?? "";
+  const shareUrl = codesseyShareUrl(shareSource);
+  const shareText = codesseyShareText(shareSource);
+  const canShare = Boolean(shareUrl) && world?.status === "complete" && !isGenerating;
 
   useEffect(() => {
     setCapturedUrl(null);
     setPostcardOpen(false);
+    setGuestbookOpen(false);
+    setSignatureSrc(null);
   }, [world?.id]);
 
-  const runExport = useCallback(async () => {
-    if (!canDownload || busy) return;
-    if (!user) {
-      onNeedSignIn();
-      return;
-    }
-
-    const src = proxiedPanoSrc(world?.panoUrl);
-    let preview: Window | null = null;
-    if (user) preview = openExportTab();
-    setBusy(true);
-    try {
+  const showDeed = useCallback(
+    async (nextSignature: string) => {
+      const src = proxiedPanoSrc(world?.panoUrl);
       await preloadPostcardAssets(src);
-      const consumeRes = await fetch("/api/credits/consume", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ amount: POSTCARD_COINS }),
-      });
-      const tick = (await consumeRes.json()) as CreditTick;
-      if (consumeRes.status === 401 || tick.error === "not_authenticated") {
-        preview?.close();
-        onNeedSignIn();
-        return;
-      }
-      if (!consumeRes.ok || !tick.ok) {
-        preview?.close();
-        if (tick.error === "insufficient_coins" || consumeRes.status === 402) {
-          onNeedCredits();
-          return;
-        }
-        throw new Error(tick.error || "Could not use a credit.");
-      }
-      onConsumed();
+      setSignatureSrc(nextSignature);
       setPostcardOpen(true);
       await new Promise((resolve) => window.requestAnimationFrame(() => resolve(undefined)));
       await new Promise((resolve) => window.setTimeout(resolve, 80));
       const node = exportRef.current;
       if (!node) throw new Error("Postcard is not ready to export.");
       const blob = await rasterizePostcard(node);
-      const objectUrl = openBlobInNewTab(blob, filenameForPostcard(heading), preview);
+      const objectUrl = URL.createObjectURL(blob);
       setCapturedUrl((prev) => {
         if (prev) URL.revokeObjectURL(prev);
         return objectUrl;
       });
+    },
+    [world?.panoUrl],
+  );
+
+  const openGuestbook = useCallback(() => {
+    if (!canDownload || busy) return;
+    if (!user) {
+      onNeedSignIn();
+      return;
+    }
+    setGuestbookOpen(true);
+  }, [busy, canDownload, onNeedSignIn, user]);
+
+  const submitGuestbook = useCallback(
+    async ({ message, signature }: { message: string; signature: string }) => {
+      if (!world?.id) throw new Error("World is not ready.");
+      const supabase = createSupabaseBrowserClient();
+      const { data, error } = await supabase.rpc("sign_guestbook", {
+        p_world_id: world.id,
+        p_signature: signature,
+        p_message: message,
+      });
+      const row = firstRpcRow(data as SignGuestbookResult | SignGuestbookResult[] | null);
+      if (error) throw new Error(error.message);
+      if (!row?.ok) {
+        if (row?.error === "not_authenticated") {
+          onNeedSignIn();
+          return false;
+        }
+        if (row?.error === "insufficient_coins") {
+          onNeedCredits("guestbook");
+          return false;
+        }
+        throw new Error(row?.error || "Could not sign the guestbook.");
+      }
+      onConsumed();
+      setGuestbookOpen(false);
+      if (row.already_signed) {
+        toast.message("You already signed this guestbook.");
+      }
+      await showDeed(row.signature_png || signature);
+      return true;
+    },
+    [onConsumed, onNeedCredits, onNeedSignIn, showDeed, world?.id],
+  );
+
+  const claimPlaque = useCallback(async () => {
+    if (!world?.id || busy) return;
+    if (!user) {
+      onNeedSignIn();
+      return;
+    }
+    setBusy(true);
+    try {
+      const supabase = createSupabaseBrowserClient();
+      const { data, error } = await supabase.rpc("buy_founder_plaque", {
+        p_world_id: world.id,
+      });
+      const row = firstRpcRow(data as BuyPlaqueResult | BuyPlaqueResult[] | null);
+      if (error) throw new Error(error.message);
+      if (!row?.ok) {
+        if (row?.error === "not_authenticated") {
+          onNeedSignIn();
+          return;
+        }
+        if (row?.error === "insufficient_coins") {
+          onNeedCredits("plaque");
+          return;
+        }
+        throw new Error(row?.error || "Could not claim the plaque.");
+      }
+      onConsumed();
+      if (row.discovered_by) onPlaqueClaimed?.(row.discovered_by);
+      toast.success(`Founder's plaque claimed. ${PLAQUE_COINS} credit used.`);
     } catch (error) {
-      preview?.close();
-      toast.error(error instanceof Error ? error.message : "Postcard export failed.");
+      toast.error(error instanceof Error ? error.message : "Could not claim the plaque.");
     } finally {
       setBusy(false);
     }
-  }, [busy, canDownload, heading, onConsumed, onNeedCredits, onNeedSignIn, user, world?.panoUrl]);
+  }, [busy, onConsumed, onNeedCredits, onNeedSignIn, onPlaqueClaimed, user, world?.id]);
 
   useEffect(() => {
     if (retryNonce && retryNonce !== lastRetry.current) {
@@ -124,9 +189,9 @@ export function WorldViewer({
     }
     if (pendingRetry.current && canDownload && !busy) {
       pendingRetry.current = false;
-      void runExport();
+      openGuestbook();
     }
-  }, [retryNonce, canDownload, busy, runExport]);
+  }, [retryNonce, canDownload, busy, openGuestbook]);
 
   return (
     <section className="relative h-full w-full flex flex-col items-center p-3 sm:p-4 md:p-6 overflow-hidden">
@@ -139,6 +204,30 @@ export function WorldViewer({
       )}
 
       <div className="relative flex-1 min-h-0 w-full rounded-2xl overflow-hidden border border-white/10 bg-black/40">
+        {world?.discoveredBy && !isGenerating && (
+          <div className="absolute bottom-3 left-3 z-[2] rounded-md border border-amber-400/30 bg-black/55 px-2.5 py-1.5 text-[11px] uppercase tracking-[0.16em] text-amber-100/90">
+            Discovered by @{world.discoveredBy}
+          </div>
+        )}
+        {world?.marbleUrl && !isGenerating && (
+          <TooltipProvider delayDuration={200}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <a
+                  href={world.marbleUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label="Open in Marble"
+                  title="Open in Marble"
+                  className="absolute top-2 right-2 z-[2] inline-flex h-8 w-8 items-center justify-center rounded-md border border-white/15 bg-black/40 text-white/80"
+                >
+                  <ExternalLink size={14} />
+                </a>
+              </TooltipTrigger>
+              <TooltipContent side="left">Open in Marble</TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        )}
         {splatUrl && !isGenerating ? (
           <SparkCanvas splatUrl={splatUrl} />
         ) : panoUrl && !isGenerating ? (
@@ -164,37 +253,92 @@ export function WorldViewer({
         )}
       </div>
 
-      {(canDownload || (world?.marbleUrl && !isGenerating)) && (
+      {(canDownload || canShare) && (
         <div className="relative shrink-0 mt-3 flex flex-wrap items-center justify-center gap-2">
           {canDownload && (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={busy}
-              onClick={() => void runExport()}
-              className="bg-transparent border-white/15 text-white/85 hover:bg-white/5 hover:text-white"
-            >
-              {busy ? (
-                <Loader2 size={14} className="mr-1.5 animate-spin" />
-              ) : (
-                <ImageIcon size={14} className="mr-1.5" />
+            <>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={busy}
+                data-tour="guestbook"
+                onClick={openGuestbook}
+                className="bg-transparent border-white/15 text-white/85 hover:bg-white/5 hover:text-white"
+              >
+                {busy ? (
+                  <Loader2 size={14} className="mr-1.5 animate-spin" />
+                ) : (
+                  <PenLine size={14} className="mr-1.5" />
+                )}
+                Sign Guestbook
+              </Button>
+              {canClaimPlaque && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={busy}
+                  onClick={() => void claimPlaque()}
+                  className="bg-transparent border-white/15 text-white/85 hover:bg-white/5 hover:text-white"
+                >
+                  {busy ? (
+                    <Loader2 size={14} className="mr-1.5 animate-spin" />
+                  ) : (
+                    <Award size={14} className="mr-1.5" />
+                  )}
+                  Founder&apos;s plaque
+                </Button>
               )}
-              Download postcard
-            </Button>
+            </>
           )}
-          {world?.marbleUrl && !isGenerating && (
-            <Button
-              asChild
-              variant="outline"
-              size="sm"
-              className="bg-transparent border-white/15 text-white/85"
-            >
-              <a href={world.marbleUrl} target="_blank" rel="noopener noreferrer">
-                <ExternalLink size={14} className="mr-1.5" />
-                Open in Marble
-              </a>
-            </Button>
+          {canShare && shareUrl && (
+            <>
+              <span className="text-[11px] uppercase tracking-[0.16em] text-white/40">
+                Share on
+              </span>
+              <Button
+                asChild
+                variant="outline"
+                size="sm"
+                className="bg-transparent border-white/15 text-white/85 hover:bg-white/5 hover:text-white"
+              >
+                <a
+                  href={twitterShareHref(shareText, shareUrl)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <XLogo />
+                  <span className="sr-only">X</span>
+                </a>
+              </Button>
+              <Button
+                asChild
+                variant="outline"
+                size="sm"
+                className="bg-transparent border-white/15 text-white/85 hover:bg-white/5 hover:text-white"
+              >
+                <a href={facebookShareHref(shareUrl)} target="_blank" rel="noopener noreferrer">
+                  <FacebookLogo />
+                  <span className="sr-only">Facebook</span>
+                </a>
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  void navigator.clipboard.writeText(shareUrl).then(
+                    () => toast.success("Link copied."),
+                    () => toast.error("Could not copy link."),
+                  );
+                }}
+                className="bg-transparent border-white/15 text-white/85 hover:bg-white/5 hover:text-white"
+              >
+                <Link2 size={14} className="mr-1.5" />
+                Copy link
+              </Button>
+            </>
           )}
         </div>
       )}
@@ -205,12 +349,21 @@ export function WorldViewer({
             repoName={heading}
             imageUrl={imageUrl}
             caption={world?.caption}
+            signatureSrc={signatureSrc}
             showHolo
             holoIntensity={1}
             flat
           />
         </div>
       </div>
+
+      <GuestbookSignDialog
+        open={guestbookOpen}
+        onOpenChange={setGuestbookOpen}
+        worldId={world?.id ?? ""}
+        busy={busy}
+        onSubmit={submitGuestbook}
+      />
 
       <PostcardModal
         open={postcardOpen}
@@ -219,12 +372,25 @@ export function WorldViewer({
         imageUrl={imageUrl}
         caption={world?.caption}
         capturedUrl={capturedUrl}
-        onDownloadCaptured={() => {
-          if (!capturedUrl) return;
-          window.open(capturedUrl, "_blank", "noopener,noreferrer");
-        }}
+        signatureSrc={signatureSrc}
       />
     </section>
+  );
+}
+
+function XLogo() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.74l7.727-8.835L1.254 2.25H8.08l4.253 5.622L18.244 2.25zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+    </svg>
+  );
+}
+
+function FacebookLogo() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M22 12.07C22 6.48 17.52 2 11.93 2S2 6.48 2 12.07c0 5.02 3.66 9.18 8.44 9.93v-7.02H7.9v-2.91h2.54V9.41c0-2.5 1.49-3.89 3.77-3.89 1.09 0 2.24.2 2.24.2v2.46h-1.26c-1.24 0-1.63.77-1.63 1.56v1.87h2.78l-.44 2.91h-2.34V22c4.78-.75 8.44-4.91 8.44-9.93z" />
+    </svg>
   );
 }
 

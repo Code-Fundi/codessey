@@ -3,9 +3,9 @@
 import { useEffect, useRef } from "react";
 import { Image as ImageIcon } from "lucide-react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
 import { BrandCard } from "@/components/BrandCard";
 import { useCardInteraction } from "@/hooks/useCardInteraction";
+import { filenameForPostcard } from "@/lib/postcard-export";
 import { cn } from "@/lib/utils";
 
 interface PostcardModalProps {
@@ -15,7 +15,7 @@ interface PostcardModalProps {
   imageUrl?: string | null;
   caption?: string | null;
   capturedUrl?: string | null;
-  onDownloadCaptured?: () => void;
+  signatureSrc?: string | null;
 }
 
 export function PostcardModal({
@@ -25,7 +25,7 @@ export function PostcardModal({
   imageUrl,
   caption,
   capturedUrl,
-  onDownloadCaptured,
+  signatureSrc,
 }: PostcardModalProps) {
   const allowDismiss = useRef(false);
   const { flipped, tilt, tiltResetting, rotating, holoVars, updateTilt, flip, reset, resetTilt } =
@@ -61,16 +61,14 @@ export function PostcardModal({
               alt={repoName ? `Postcard from ${repoName}` : "Codessey postcard"}
               className="card-postcard rounded-2xl shadow-[0_30px_80px_-30px_rgba(21,128,61,0.45)]"
             />
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={onDownloadCaptured}
-              className="bg-transparent border-white/15 text-white/85 hover:bg-white/5 hover:text-white"
+            <a
+              href={capturedUrl}
+              download={filenameForPostcard(repoName)}
+              className="inline-flex h-8 items-center justify-center rounded-md border border-white/15 bg-transparent px-3 text-sm font-medium text-white/85 hover:bg-white/5 hover:text-white"
             >
               <ImageIcon size={14} className="mr-1.5" />
               Download postcard
-            </Button>
+            </a>
           </div>
         ) : (
           <button
@@ -91,6 +89,7 @@ export function PostcardModal({
               repoName={repoName}
               imageUrl={imageUrl}
               caption={caption}
+              signatureSrc={signatureSrc}
               flipped={flipped}
               tiltX={tilt.x}
               tiltY={tilt.y}

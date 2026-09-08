@@ -25,7 +25,13 @@ import {
   setWorldLabsBrowserKey,
 } from "@/lib/worldlabs-key";
 
-export type CreditsDialogReason = "purchase" | "expired" | "signin" | "postcard" | "worldlabs";
+export type CreditsDialogReason =
+  | "purchase"
+  | "expired"
+  | "signin"
+  | "guestbook"
+  | "plaque"
+  | "worldlabs";
 
 interface CreditPurchaseDialogProps {
   open: boolean;
@@ -57,7 +63,7 @@ export function CreditPurchaseDialog({
   const [busy, setBusy] = useState(false);
   const [keyDraft, setKeyDraft] = useState("");
   const [hasKey, setHasKey] = useState(false);
-  const expired = reason === "expired" || reason === "postcard";
+  const expired = reason === "expired" || reason === "guestbook" || reason === "plaque";
 
   useEffect(() => {
     if (!open) return;
@@ -116,8 +122,15 @@ export function CreditPurchaseDialog({
         customUsd: packId === "custom" ? Number(customUsd) : undefined,
       });
       await paystackBrowserClient.openCheckout({
-        accessCode: checkout.accessCode,
+        publicKey: checkout.publicKey,
+        email: checkout.email,
+        amount: checkout.amount,
         reference: checkout.reference,
+        currency: checkout.currency,
+        metadata: {
+          pack_id: checkout.packId,
+          coins: checkout.coins,
+        },
         onSuccess: async (reference) => {
           try {
             await paystackBrowserClient.verify(reference);
@@ -146,11 +159,12 @@ export function CreditPurchaseDialog({
       <DialogContent className="max-w-lg max-h-[min(90dvh,720px)] min-h-0 overflow-y-auto overscroll-contain bg-[#090C10]/95 backdrop-blur-xl border-white/10 text-foreground">
         <DialogHeader>
           <DialogTitle className="font-display text-lg font-extrabold gradient-text">
-            Postcard credits
+            Codessey coins
           </DialogTitle>
           <DialogDescription className="text-white/55">
-            World generation requires your World Labs key in this browser. Codessey coins download
-            postcards (1 credit each). New GitHub accounts get 2 credits.
+            World generation requires your World Labs key in this browser. Codessey coins sign the
+            guestbook and claim a founder&apos;s plaque (1 credit each). New GitHub accounts get 2
+            credits.
             {secondsUntilRefresh > 0
               ? ` Next free credit in ${formatRefreshWait(secondsUntilRefresh)}.`
               : ""}
@@ -171,9 +185,11 @@ export function CreditPurchaseDialog({
               className="w-full h-32 object-cover object-center"
             />
             <p className="px-3 py-2.5 text-sm text-amber-100/90 leading-snug">
-              {reason === "postcard"
-                ? "Add coins to download this postcard, or generate freely with a World Labs key."
-                : "Give our servers time to cool off but skip the queue with a World Labs key or coins."}
+              {reason === "guestbook"
+                ? "Add coins to sign this guestbook, or generate freely with a World Labs key."
+                : reason === "plaque"
+                  ? "Add coins to claim the founder's plaque, or generate freely with a World Labs key."
+                  : "Give our servers time to cool off but skip the queue with a World Labs key or coins."}
             </p>
           </div>
         )}

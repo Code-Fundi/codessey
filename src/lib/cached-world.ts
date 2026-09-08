@@ -20,6 +20,8 @@ export function cachedWorldFromRow(row: WorldRow, branchOverride?: string): Cach
     generationMode: row.generation_mode,
     billingSource: row.billing_source,
     repoUrl: row.repo_url,
+    userId: row.user_id,
+    discoveredBy: row.discovered_by ?? null,
   };
 }
 

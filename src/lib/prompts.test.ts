@@ -192,19 +192,51 @@ describe("buildLandscapePrompt", () => {
     ).not.toThrow();
   });
 
-  it("compiles a blueprint without an index", () => {
+  it("turns notable index files into named buildings and skips lockfiles", () => {
     const scene = compileLandscapeScene({
-      repoUrl: "https://github.com/acme/notes",
-      branch: "main",
-      blueprint: {
-        readme: "A personal markdown garden with react and next.",
-        description: "Notes you can walk",
-        dependencies: ["react", "next"],
-        total_files: 22,
-      },
+      index: index({
+        url: "https://github.com/acme/app",
+        total_files: 12,
+        files: {
+          tree: null,
+          index: [
+            {
+              path: "src/components/WorldViewer.tsx",
+              name: "WorldViewer.tsx",
+              language: "tsx",
+              ext: "tsx",
+              sizeBytes: 40_000,
+            },
+            {
+              path: "src/lib/prompts.ts",
+              name: "prompts.ts",
+              language: "ts",
+              ext: "ts",
+              sizeBytes: 30_000,
+            },
+            {
+              path: "package-lock.json",
+              name: "package-lock.json",
+              language: "json",
+              ext: "json",
+              sizeBytes: 400_000,
+            },
+            {
+              path: "node_modules/react/index.js",
+              name: "index.js",
+              language: "js",
+              ext: "js",
+              sizeBytes: 80_000,
+            },
+          ],
+        },
+      }),
     });
-    expect(scene.prompt).toMatch(/outdoor landscape/i);
-    expect(scene.prompt).toMatch(/blueprint README|Notes you can walk/);
-    expect(scene.landmarks.join(" ")).toMatch(/gallery|balcony/i);
+    expect(scene.prompt).toMatch(/Named buildings from notable files/);
+    expect(scene.prompt).toMatch(/WorldViewer keep \(tsx\)/);
+    expect(scene.prompt).toMatch(/prompts mill \(ts\)/);
+    const named = scene.prompt.match(/Named buildings from notable files: ([^.]+)/)?.[1] ?? "";
+    expect(named).not.toMatch(/package-lock|node_modules/);
+    expect(scene.prompt.length).toBeLessThanOrEqual(2000);
   });
 });

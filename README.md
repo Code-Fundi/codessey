@@ -12,11 +12,11 @@ Index a GitHub repository with CodeFundi, generate a World Labs landscape from t
 4. Point Paystack's webhook to `{origin}/api/paystack/webhook`.
 5. Keep `CODEFUNDI_API_KEY`, `PAYSTACK_SECRET_KEY`, and `SUPABASE_SERVICE_ROLE_KEY` server-only. They are never sent to the browser. World Labs keys stay in the user's browser (`localStorage`); Codessey does not hold a platform World Labs key.
 
-Generate uses the visitor's World Labs key. Codessey coins are for postcard downloads (new GitHub accounts get 2). Generated worlds are stored and listed on the Explore tab (`is_public` defaults to true). World Labs has no completion webhooks — the browser polls Marble with the user's key until the splat is written back to `public.worlds`.
+Generate uses the visitor's World Labs key. Codessey coins are for guestbook signatures and founder plaques (new GitHub accounts get 2). Generated worlds are stored and listed on the Explore tab (`is_public` defaults to true). World Labs has no completion webhooks — the browser polls Marble with the user's key until the splat is written back to `public.worlds`.
 
 ```bash
 pnpm install
 pnpm dev
 ```
 
-Add a World Labs API key in the header dialog to generate. Purchase postcard coins in the header via Paystack Inline.
+Add a World Labs API key in the header dialog to generate. Purchase Codessey coins in the header via Paystack Inline.

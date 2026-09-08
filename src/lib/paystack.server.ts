@@ -1,7 +1,5 @@
 import { createHmac, timingSafeEqual } from "crypto";
 
-const PAYSTACK_API = "https://api.paystack.co";
-
 export function getPaystackSecretKey(): string {
   const key = process.env.PAYSTACK_SECRET_KEY ?? "";
   if (!key) {
@@ -10,18 +8,16 @@ export function getPaystackSecretKey(): string {
   return key;
 }
 
-export function getPaystackCurrency(): string {
-  return process.env.PAYSTACK_CURRENCY ?? "USD";
+export function getPaystackPublicKey(): string {
+  const key = process.env.NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY ?? "";
+  if (!key) {
+    throw new Error("NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY is not configured.");
+  }
+  return key;
 }
 
-export interface PaystackInitializeResponse {
-  status: boolean;
-  message: string;
-  data: {
-    authorization_url: string;
-    access_code: string;
-    reference: string;
-  };
+export function getPaystackCurrency(): string {
+  return process.env.PAYSTACK_CURRENCY ?? "USD";
 }
 
 export interface PaystackVerifyData {
@@ -33,59 +29,9 @@ export interface PaystackVerifyData {
   customer?: { email?: string };
 }
 
-export interface PaystackVerifyResponse {
-  status: boolean;
-  message: string;
-  data: PaystackVerifyData;
-}
-
 export interface PaystackWebhookEvent {
   event: string;
   data: PaystackVerifyData & Record<string, unknown>;
-}
-
-async function paystackFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const response = await fetch(`${PAYSTACK_API}${path}`, {
-    ...options,
-    headers: {
-      Authorization: `Bearer ${getPaystackSecretKey()}`,
-      "Content-Type": "application/json",
-      ...options.headers,
-    },
-  });
-  const body = (await response.json()) as T & { status?: boolean; message?: string };
-  if (!response.ok || body.status === false) {
-    throw new Error(body.message || `Paystack request failed: ${response.status}`);
-  }
-  return body;
-}
-
-export async function initializePaystackTransaction(params: {
-  email: string;
-  amount: number;
-  reference: string;
-  currency?: string;
-  metadata?: Record<string, unknown>;
-}): Promise<PaystackInitializeResponse> {
-  return paystackFetch<PaystackInitializeResponse>("/transaction/initialize", {
-    method: "POST",
-    body: JSON.stringify({
-      email: params.email,
-      amount: params.amount,
-      reference: params.reference,
-      currency: params.currency ?? getPaystackCurrency(),
-      metadata: params.metadata,
-    }),
-  });
-}
-
-export async function verifyPaystackTransaction(
-  reference: string,
-): Promise<PaystackVerifyResponse> {
-  return paystackFetch<PaystackVerifyResponse>(
-    `/transaction/verify/${encodeURIComponent(reference)}`,
-    { method: "GET" },
-  );
 }
 
 export function verifyPaystackSignature(rawBody: string, signature: string | null): boolean {

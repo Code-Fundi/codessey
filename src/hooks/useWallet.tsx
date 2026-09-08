@@ -3,6 +3,8 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import type { CreditTick } from "@/lib/credit-status";
+import type { MyWalletResult } from "@/lib/database.types";
+import { firstRpcRow } from "@/lib/rpc";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 
 const EMPTY: CreditTick = {
@@ -30,6 +32,20 @@ interface WalletValue {
 
 const WalletContext = createContext<WalletValue | null>(null);
 
+function tickFromWallet(row: MyWalletResult | null): CreditTick {
+  const balance = row?.balance ?? 0;
+  return {
+    ok: true,
+    balance,
+    paidBalance: balance,
+    freeBalance: 0,
+    nextRefreshAt: new Date().toISOString(),
+    secondsUntilRefresh: 0,
+    source: row ? "wallet" : "none",
+    error: null,
+  };
+}
+
 export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [credits, setCredits] = useState<CreditTick>(EMPTY);
@@ -37,17 +53,24 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
   const refresh = useCallback(async () => {
     try {
-      if (process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
-        const supabase = createSupabaseBrowserClient();
-        const {
-          data: { user: nextUser },
-        } = await supabase.auth.getUser();
-        setUser(nextUser);
+      if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+        return;
       }
-      const res = await fetch("/api/credits/status");
-      if (res.ok) {
-        setCredits((await res.json()) as CreditTick);
+      const supabase = createSupabaseBrowserClient();
+      const {
+        data: { user: nextUser },
+      } = await supabase.auth.getUser();
+      setUser(nextUser);
+      if (!nextUser) {
+        setCredits(EMPTY);
+        return;
       }
+      const { data, error } = await supabase.rpc("get_my_wallet");
+      if (error) {
+        setCredits({ ...EMPTY, ok: false, error: error.message, source: "none" });
+        return;
+      }
+      setCredits(tickFromWallet(firstRpcRow(data as MyWalletResult | MyWalletResult[] | null)));
     } catch {
       /* local preview without supabase */
     } finally {

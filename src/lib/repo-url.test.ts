@@ -9,7 +9,7 @@ import {
 import { asTrimmed } from "./utils";
 import { publicRepoToast } from "./public-repo";
 import { isAllowedPanoHost, parsePanoProxyUrl } from "./pano-proxy";
-import { POSTCARD_COINS, SIGNUP_COINS, coinsForMode } from "./generation";
+import { GUESTBOOK_COINS, PLAQUE_COINS, SIGNUP_COINS, coinsForMode } from "./generation";
 import { ownerRepoHeading, viewerMedia } from "./cached-world";
 import { indexRepoPayload } from "./codefundi-index";
 
@@ -80,11 +80,12 @@ describe("pano proxy allowlist", () => {
   });
 });
 
-describe("postcard credits", () => {
-  it("does not bill generate and charges 1 coin for postcards", () => {
+describe("guestbook credits", () => {
+  it("does not bill generate and charges 1 coin for guestbook and plaque", () => {
     expect(coinsForMode("pano")).toBe(0);
     expect(coinsForMode("world")).toBe(0);
-    expect(POSTCARD_COINS).toBe(1);
+    expect(GUESTBOOK_COINS).toBe(1);
+    expect(PLAQUE_COINS).toBe(1);
     expect(SIGNUP_COINS).toBe(2);
   });
 });

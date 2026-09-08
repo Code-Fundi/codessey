@@ -1,4 +1,6 @@
-import { useCallback, useState } from "react";
+"use client";
+
+import { createContext, useCallback, useContext, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import type { WorldRow } from "@/lib/database.types";
 import type { BillingSource, GenerationMode } from "@/lib/generation";
@@ -11,12 +13,18 @@ import { publicRepoToast } from "@/lib/public-repo";
 import { indexRepoPayload } from "@/lib/codefundi-index";
 import { asTrimmed } from "@/lib/utils";
 import { decidePollTick, logPollTick } from "@/lib/world-poll";
+import {
+  applyWorldPollResult,
+  lookupWorldByRepoUrl,
+  preSavePendingWorld,
+} from "@/lib/worlds.client";
 import { getWorldLabsBrowserKey } from "@/lib/worldlabs-key";
 import {
   createWorldLabsClient,
   unwrapWorld,
   type Operation,
   type World,
+  type WorldLabsModel,
   WorldLabsAPIError,
 } from "@/lib/worldlabs.client";
 
@@ -32,15 +40,39 @@ function toCached(row: WorldRow, branch: string): CachedWorld {
   return cachedWorldFromRow(row, branch);
 }
 
-export function useWorldGeneration() {
+export type GeneratePendingHandler = (world: CachedWorld, row: WorldRow) => void;
+
+interface WorldGenerationValue {
+  generate: (
+    repoUrl: string,
+    branch: string,
+    onPending?: GeneratePendingHandler,
+    model?: WorldLabsModel,
+  ) => Promise<CachedWorld | null>;
+  isGenerating: boolean;
+  progress: string | null;
+  generatingId: string | null;
+  generatingWorld: CachedWorld | null;
+  generatingRepoUrl: string | null;
+}
+
+const WorldGenerationContext = createContext<WorldGenerationValue | null>(null);
+
+export function WorldGenerationProvider({ children }: { children: React.ReactNode }) {
   const [isGenerating, setIsGenerating] = useState(false);
   const [progress, setProgress] = useState<string | null>(null);
+  const [generatingId, setGeneratingId] = useState<string | null>(null);
+  const [generatingWorld, setGeneratingWorld] = useState<CachedWorld | null>(null);
+  const [generatingRepoUrl, setGeneratingRepoUrl] = useState<string | null>(null);
+  const inFlightRef = useRef(false);
+  const generatingWorldRef = useRef<CachedWorld | null>(null);
 
   const generate = useCallback(
     async (
       repoUrl: string,
       branch: string,
-      onPending?: (world: CachedWorld, row: WorldRow) => void,
+      onPending?: GeneratePendingHandler,
+      model: WorldLabsModel = "marble-1.1",
     ): Promise<CachedWorld | null> => {
       const url = asTrimmed(repoUrl);
       const typedBranch = asTrimmed(branch);
@@ -49,16 +81,24 @@ export function useWorldGeneration() {
         toast.error("Enter a repository URL.");
         return null;
       }
+      if (inFlightRef.current) {
+        return generatingWorldRef.current;
+      }
 
+      inFlightRef.current = true;
       setIsGenerating(true);
       setProgress("Looking up existing world…");
+      setGeneratingRepoUrl(url);
+
+      const trackPending = (cached: CachedWorld, row: WorldRow) => {
+        generatingWorldRef.current = cached;
+        setGeneratingId(row.id);
+        setGeneratingWorld(cached);
+        onPending?.(cached, row);
+      };
 
       try {
-        const lookupRes = await fetch(`/api/worlds/lookup?repoUrl=${encodeURIComponent(url)}`);
-        const lookup = await readJson<{ world?: WorldRow | null; error?: string }>(lookupRes);
-        if (!lookupRes.ok) throw new Error(lookup.error || "Lookup failed.");
-
-        const existing = lookup.world ?? null;
+        const existing = await lookupWorldByRepoUrl(url);
         const persistBranch = typedBranch || existing?.branch || "";
         const canReuse = existing && existing.status === "complete" && Boolean(existing.splat_url);
         if (canReuse && existing) {
@@ -72,13 +112,13 @@ export function useWorldGeneration() {
 
         if (existing?.status === "pending" && existing.operation_id) {
           setProgress(existing.progress ?? "Resuming generation…");
-          onPending?.(toCached(existing, persistBranch), existing);
+          trackPending(toCached(existing, persistBranch), existing);
           return pollUntilReady({
             row: existing,
             url,
             branch: persistBranch,
             mode: existing.generation_mode === "world" ? "world" : "pano",
-            onPending,
+            onPending: trackPending,
             setProgress,
           });
         }
@@ -102,20 +142,20 @@ export function useWorldGeneration() {
         const blueprint = hasBlueprintPayload(blueprintBody.blueprint)
           ? blueprintBody.blueprint
           : null;
-        if (!blueprint) {
-          setProgress("Indexing repository…");
-          const indexRes = await fetch("/api/codefundi/index", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(indexRepoPayload(url, typedBranch)),
-          });
-          const indexed = await readJson<{ index?: RepositoryIndexInitRepo; error?: string }>(
-            indexRes,
-          );
-          if (!indexRes.ok || !indexed.index) {
-            throw new Error(publicRepoToast(indexRes.status, indexed.error || "Index failed."));
-          }
+
+        setProgress("Indexing repository…");
+        const indexRes = await fetch("/api/codefundi/index", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(indexRepoPayload(url, typedBranch)),
+        });
+        const indexed = await readJson<{ index?: RepositoryIndexInitRepo; error?: string }>(
+          indexRes,
+        );
+        if (indexRes.ok && indexed.index) {
           index = indexed.index;
+        } else if (!blueprint) {
+          throw new Error(publicRepoToast(indexRes.status, indexed.error || "Index failed."));
         }
 
         const resolvedBranch = typedBranch || index?.branch || "";
@@ -138,7 +178,7 @@ export function useWorldGeneration() {
         try {
           operation = await createWorldLabsClient({ apiKey: userKey }).generateWorld({
             display_name: displayName.slice(0, 64),
-            model: "marble-1.1",
+            model,
             world_prompt: { type: "text", text_prompt: prompt },
           });
         } catch (error) {
@@ -149,26 +189,19 @@ export function useWorldGeneration() {
         }
         const operationId = operation.operation_id;
 
-        const pendingRes = await fetch("/api/worlds/pending", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            operationId,
-            repoUrl: url,
-            branch: resolvedBranch,
-            repoName: displayName,
-            generationMode: mode,
-            billingSource,
-          }),
+        const row = await preSavePendingWorld({
+          operationId,
+          repoUrl: url,
+          branch: resolvedBranch,
+          repoName: displayName,
+          generationMode: mode,
+          billingSource,
         });
-        const pendingBody = await readJson<{ world?: WorldRow; error?: string }>(pendingRes);
-        if (!pendingRes.ok || !pendingBody.world?.id) {
-          throw new Error(pendingBody.error || "Could not save pending world.");
+        if (!row.id) {
+          throw new Error("Could not save pending world.");
         }
-
-        const row = pendingBody.world;
         setProgress(row.progress ?? "Generating landscape…");
-        onPending?.(toCached(row, resolvedBranch), row);
+        trackPending(toCached(row, resolvedBranch), row);
 
         return pollUntilReady({
           row,
@@ -176,21 +209,48 @@ export function useWorldGeneration() {
           branch: resolvedBranch,
           mode,
           initial: operation,
-          onPending,
+          onPending: trackPending,
           setProgress,
         });
       } catch (error) {
         toast.error(error instanceof Error ? error.message : "Generation failed.");
         return null;
       } finally {
+        inFlightRef.current = false;
         setIsGenerating(false);
         setProgress(null);
+        setGeneratingId(null);
+        setGeneratingWorld(null);
+        setGeneratingRepoUrl(null);
+        generatingWorldRef.current = null;
       }
     },
     [],
   );
 
-  return { generate, isGenerating, progress };
+  const value = useMemo<WorldGenerationValue>(
+    () => ({
+      generate,
+      isGenerating,
+      progress,
+      generatingId,
+      generatingWorld,
+      generatingRepoUrl,
+    }),
+    [generate, isGenerating, progress, generatingId, generatingWorld, generatingRepoUrl],
+  );
+
+  return (
+    <WorldGenerationContext.Provider value={value}>{children}</WorldGenerationContext.Provider>
+  );
+}
+
+export function useWorldGeneration(): WorldGenerationValue {
+  const ctx = useContext(WorldGenerationContext);
+  if (!ctx) {
+    throw new Error("useWorldGeneration must be used within WorldGenerationProvider.");
+  }
+  return ctx;
 }
 
 async function pollUntilReady(input: {
@@ -231,14 +291,17 @@ async function pollUntilReady(input: {
     marbleUrl?: string | null;
     panoUrl?: string | null;
   }): Promise<WorldRow> => {
-    const res = await fetch("/api/worlds/apply", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ worldId: row.id, ...patch }),
+    return applyWorldPollResult(row.id, {
+      done: patch.done,
+      progress: patch.progress,
+      error: patch.error,
+      worldLabsId: patch.worldLabsId,
+      splatUrl: patch.splatUrl,
+      thumbnailUrl: patch.thumbnailUrl,
+      caption: patch.caption,
+      marbleUrl: patch.marbleUrl,
+      panoUrl: patch.panoUrl,
     });
-    const body = await readJson<{ world?: WorldRow; error?: string }>(res);
-    if (!res.ok || !body.world) throw new Error(body.error || "Apply failed.");
-    return body.world;
   };
 
   let operation = input.initial ?? (await fetchOperation());

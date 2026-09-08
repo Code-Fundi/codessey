@@ -10,22 +10,38 @@ describe("plan credit contracts", () => {
   it("does not proxy World Labs with a server API key", () => {
     expect(existsSync(resolve(root, "src/app/api/worldlabs/generate/route.ts"))).toBe(false);
     expect(read("src/lib/providers.server.ts")).not.toMatch(/WORLDLABS_API_KEY|getServerWorldLabs/);
-    expect(read("src/hooks/useWorldGeneration.ts")).not.toMatch(/\/api\/worldlabs/);
+    expect(read("src/hooks/useWorldGeneration.tsx")).not.toMatch(/\/api\/worldlabs/);
     expect(read(".env.example")).not.toMatch(/WORLDLABS_API_KEY/);
-    expect(read("src/hooks/useWorldGeneration.ts")).toMatch(/MISSING_WORLD_LABS_KEY/);
+    expect(read("src/hooks/useWorldGeneration.tsx")).toMatch(/MISSING_WORLD_LABS_KEY/);
   });
 
-  it("requires a session and amount 1 for postcard consume", () => {
-    const file = read("src/app/api/credits/consume/route.ts");
-    expect(file).toMatch(/getUser/);
-    expect(file).toMatch(/POSTCARD_COINS/);
-    expect(file).toMatch(/401/);
+  it("signs the guestbook from the browser with one coin", () => {
+    expect(existsSync(resolve(root, "src/app/api/credits/consume/route.ts"))).toBe(false);
+    expect(read("src/lib/generation.ts")).toMatch(/GUESTBOOK_COINS = 1/);
+    expect(read("src/components/WorldViewer.tsx")).toMatch(/sign_guestbook/);
+    expect(read("src/hooks/useWallet.tsx")).toMatch(/get_my_wallet/);
   });
 
-  it("returns a 0 balance for unauthenticated status", () => {
-    const file = read("src/app/api/credits/status/route.ts");
-    expect(file).toMatch(/signedIn/);
-    expect(file).toMatch(/balance: 0/);
+  it("reads wallet balance from get_my_wallet instead of a status route", () => {
+    expect(existsSync(resolve(root, "src/app/api/credits/status/route.ts"))).toBe(false);
+    expect(read("src/hooks/useWallet.tsx")).toMatch(/get_my_wallet/);
+    expect(read("src/hooks/useWallet.tsx")).not.toMatch(/\/api\/credits\/status/);
+  });
+
+  it("creates checkout with create_my_payment and keeps the Paystack webhook", () => {
+    expect(existsSync(resolve(root, "src/app/api/paystack/initialize/route.ts"))).toBe(false);
+    expect(existsSync(resolve(root, "src/app/api/paystack/verify/route.ts"))).toBe(false);
+    expect(existsSync(resolve(root, "src/app/api/paystack/webhook/route.ts"))).toBe(true);
+    expect(read("src/lib/paystack.client.ts")).toMatch(/create_my_payment/);
+  });
+
+  it("generates worlds through publishable-key RPCs", () => {
+    expect(existsSync(resolve(root, "src/app/api/worlds/lookup/route.ts"))).toBe(false);
+    expect(existsSync(resolve(root, "src/app/api/worlds/pending/route.ts"))).toBe(false);
+    expect(existsSync(resolve(root, "src/app/api/worlds/apply/route.ts"))).toBe(false);
+    expect(read("src/lib/worlds.client.ts")).toMatch(/lookup_world_by_repo_url/);
+    expect(read("src/lib/worlds.client.ts")).toMatch(/pre_save_pending_world/);
+    expect(read("src/lib/worlds.client.ts")).toMatch(/apply_world_poll_result/);
   });
 
   it("re-enables signup grant of 2 coins in the postcard migration", () => {

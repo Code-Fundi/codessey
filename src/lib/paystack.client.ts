@@ -1,5 +1,11 @@
 import PaystackPop from "@paystack/inline-js";
-import type { CoinPackId, PaymentRow } from "@/lib/database.types";
+import type {
+  CoinPackId,
+  CreateMyPaymentResult,
+  MyWalletResult,
+  PaymentRow,
+} from "@/lib/database.types";
+import { firstRpcRow } from "@/lib/rpc";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 
 export interface CheckoutSelection {
@@ -8,56 +14,102 @@ export interface CheckoutSelection {
 }
 
 export interface InitializeCheckoutResponse {
-  accessCode: string;
   reference: string;
   amount: number;
   coins: number;
   packId: CoinPackId;
+  email: string;
+  publicKey: string;
+  currency: string;
 }
 
 function loadPaystack(): Promise<typeof PaystackPop> {
   return import("@paystack/inline-js").then((mod) => mod.default);
 }
 
+function sleep(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function getPublicKey(): string {
+  const key = process.env.NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY ?? "";
+  if (!key) throw new Error("NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY is not configured.");
+  return key;
+}
+
 export class PaystackBrowserClient {
   async initializeCheckout(selection: CheckoutSelection): Promise<InitializeCheckoutResponse> {
-    const res = await fetch("/api/paystack/initialize", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(selection),
+    const supabase = createSupabaseBrowserClient();
+    const customCents =
+      selection.packId === "custom" && selection.customUsd != null
+        ? Math.round(selection.customUsd * 100)
+        : null;
+    const { data, error } = await supabase.rpc("create_my_payment", {
+      p_pack_id: selection.packId,
+      p_custom_cents: customCents,
     });
-    const body = (await res.json()) as InitializeCheckoutResponse & { error?: string };
-    if (!res.ok) {
-      throw new Error(body.error || "Failed to start checkout.");
+    const row = firstRpcRow(data as CreateMyPaymentResult | CreateMyPaymentResult[] | null);
+    if (error || !row) {
+      throw new Error(error?.message || "Failed to start checkout.");
     }
-    return body;
+    return {
+      reference: row.reference,
+      amount: row.amount,
+      coins: row.coins,
+      packId: row.pack_id as CoinPackId,
+      email: row.email,
+      publicKey: getPublicKey(),
+      currency: row.currency,
+    };
   }
 
   async openCheckout(params: {
-    accessCode: string;
+    publicKey: string;
+    email: string;
+    amount: number;
     reference: string;
+    currency: string;
+    metadata?: Record<string, unknown>;
     onSuccess: (reference: string) => void;
     onCancel: () => void;
   }): Promise<void> {
-    const PaystackPop = await loadPaystack();
-    const popup = new PaystackPop();
-    popup.resumeTransaction(params.accessCode, {
-      onSuccess: () => params.onSuccess(params.reference),
+    const PaystackPopCtor = await loadPaystack();
+    const popup = new PaystackPopCtor();
+    popup.newTransaction({
+      key: params.publicKey,
+      email: params.email,
+      amount: params.amount,
+      ref: params.reference,
+      currency: params.currency,
+      metadata: params.metadata,
+      onSuccess: (transaction: { reference?: string }) => {
+        params.onSuccess(transaction?.reference || params.reference);
+      },
       onCancel: params.onCancel,
     });
   }
 
   async verify(reference: string): Promise<{ balance: number }> {
-    const res = await fetch("/api/paystack/verify", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ reference }),
-    });
-    const body = (await res.json()) as { balance?: number; error?: string };
-    if (!res.ok) {
-      throw new Error(body.error || "Failed to verify payment.");
+    const supabase = createSupabaseBrowserClient();
+    for (let i = 0; i < 20; i += 1) {
+      const { data, error } = await supabase
+        .from("payments")
+        .select("status")
+        .eq("reference", reference)
+        .maybeSingle();
+      if (error) throw new Error(error.message);
+      const status = (data as { status?: string } | null)?.status;
+      if (status === "success") {
+        const wallet = await supabase.rpc("get_my_wallet");
+        const row = firstRpcRow(wallet.data as MyWalletResult | MyWalletResult[] | null);
+        return { balance: row?.balance ?? 0 };
+      }
+      if (status === "failed" || status === "abandoned") {
+        throw new Error("Payment did not complete.");
+      }
+      await sleep(1000);
     }
-    return { balance: body.balance ?? 0 };
+    throw new Error("Payment is processing. Coins will appear shortly.");
   }
 
   async listPayments(): Promise<PaymentRow[]> {

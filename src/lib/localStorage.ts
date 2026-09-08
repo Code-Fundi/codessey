@@ -17,6 +17,8 @@ export interface CachedWorld {
   generationMode?: GenerationMode;
   billingSource?: BillingSource;
   repoUrl?: string | null;
+  userId?: string | null;
+  discoveredBy?: string | null;
 }
 
 const KEY = (id: string) => `codessey:${id}`;

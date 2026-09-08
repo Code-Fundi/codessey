@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Syne, DM_Sans } from "next/font/google";
 import { Toaster } from "sonner";
 import { WalletProvider } from "@/hooks/useWallet";
+import { WorldGenerationProvider } from "@/hooks/useWorldGeneration";
 import "../styles.css";
 
 const syne = Syne({
@@ -83,7 +84,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" className={`${syne.variable} ${dmSans.variable}`}>
       <body className="antialiased">
-        <WalletProvider>{children}</WalletProvider>
+        <WalletProvider>
+          <WorldGenerationProvider>{children}</WorldGenerationProvider>
+        </WalletProvider>
         <Toaster theme="dark" position="bottom-right" richColors />
       </body>
     </html>

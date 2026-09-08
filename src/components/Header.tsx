@@ -33,6 +33,12 @@ export function Header({
         >
           CODESSEY
         </Link>
+        <Link
+          href="/rankings"
+          className="text-[11px] uppercase tracking-[0.16em] text-white/50 hover:text-white px-2 py-1 rounded-md hover:bg-white/5"
+        >
+          Rankings
+        </Link>
       </div>
 
       <div className="flex items-center gap-2">
@@ -44,6 +50,7 @@ export function Header({
           onClick={() => onCreditsOpenChange(true, "purchase")}
           className="text-amber-300 hover:text-amber-200 font-semibold gap-1.5"
           aria-label="Open coin purchase"
+          data-tour="coins"
         >
           <Coins size={16} />
           <span className="tabular-nums">{balance ?? 0}</span>

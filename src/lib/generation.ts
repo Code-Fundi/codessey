@@ -3,12 +3,13 @@ export type BillingSource = "credits" | "user_key";
 
 export const PANO_COINS = 1;
 export const WORLD_COINS = 20;
-export const POSTCARD_COINS = 1;
+export const GUESTBOOK_COINS = 1;
+export const PLAQUE_COINS = 1;
 export const SIGNUP_COINS = 2;
 export const CUSTOM_CENTS_PER_COIN = 50;
 export const WORLDLABS_API_KEYS_URL = "https://platform.worldlabs.ai/api-keys";
 export const WORLDLABS_BROWSER_KEY = "codessey:worldlabsApiKey";
-export const RETRY_POSTCARD_KEY = "codessey:retryPostcard";
+export const RETRY_GUESTBOOK_KEY = "codessey:retryGuestbook";
 export const MISSING_WORLD_LABS_KEY = "Add a World Labs API key to generate.";
 
 export function coinsForMode(_mode: GenerationMode): number {

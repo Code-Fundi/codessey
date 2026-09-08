@@ -33,7 +33,14 @@ begin
       ('worlds', 'pano_url'),
       ('worlds', 'generation_mode'),
       ('worlds', 'billing_source'),
-      ('worlds', 'repo_url_norm')
+      ('worlds', 'repo_url_norm'),
+      ('worlds', 'discovered_by'),
+      ('worlds', 'plaque_at'),
+      ('profiles', 'github_username'),
+      ('world_signatures', 'message'),
+      ('world_signatures', 'signature_png'),
+      ('world_visits', 'visitor_id'),
+      ('world_ranking_snapshots', 'is_stale')
   ) as e(table_name, column_name)
   left join information_schema.columns c
     on c.table_schema = 'public'
@@ -60,7 +67,8 @@ begin
     and c.relname in (
       'app_config', 'coin_packs', 'profiles', 'wallets',
       'payments', 'credit_ledger', 'paystack_events',
-      'ip_quotas', 'ip_identities', 'ip_quota_events', 'worlds'
+      'ip_quotas', 'ip_identities', 'ip_quota_events', 'worlds',
+      'world_signatures', 'world_visits', 'world_ranking_snapshots'
     )
     and not c.relrowsecurity;
 
@@ -102,6 +110,21 @@ begin
   if to_regprocedure('public.lookup_world_by_repo_url(text)') is null then
     raise exception 'missing lookup_world_by_repo_url';
   end if;
+  if to_regprocedure('public.create_my_payment(text, integer)') is null then
+    raise exception 'missing create_my_payment';
+  end if;
+  if to_regprocedure('public.sign_guestbook(uuid, text, text)') is null then
+    raise exception 'missing sign_guestbook';
+  end if;
+  if to_regprocedure('public.buy_founder_plaque(uuid)') is null then
+    raise exception 'missing buy_founder_plaque';
+  end if;
+  if to_regprocedure('public.record_world_visit(uuid)') is null then
+    raise exception 'missing record_world_visit';
+  end if;
+  if to_regprocedure('public.snapshot_world_rankings()') is null then
+    raise exception 'missing snapshot_world_rankings';
+  end if;
 end
 $$;
 
@@ -119,31 +142,58 @@ begin
      or has_table_privilege('authenticated', 'public.worlds', 'INSERT') then
     raise exception 'clients must not INSERT worlds';
   end if;
-  if has_function_privilege(
-       'anon',
-       'public.pre_save_pending_world(text, text, text, text, uuid, boolean, text, text)',
-       'EXECUTE'
-     )
-     or has_function_privilege(
+  if has_table_privilege('anon', 'public.world_signatures', 'INSERT')
+     or has_table_privilege('authenticated', 'public.world_signatures', 'INSERT')
+     or has_table_privilege('anon', 'public.world_visits', 'INSERT')
+     or has_table_privilege('authenticated', 'public.world_visits', 'INSERT')
+     or has_table_privilege('anon', 'public.world_visits', 'SELECT')
+     or has_table_privilege('authenticated', 'public.world_visits', 'SELECT') then
+    raise exception 'clients must not write signatures/visits or read visits';
+  end if;
+  if not has_function_privilege(
        'authenticated',
        'public.pre_save_pending_world(text, text, text, text, uuid, boolean, text, text)',
        'EXECUTE'
+     )
+     or not has_function_privilege(
+       'anon',
+       'public.pre_save_pending_world(text, text, text, text, uuid, boolean, text, text)',
+       'EXECUTE'
      ) then
-    raise exception 'clients must not execute pre_save_pending_world';
+    raise exception 'clients missing pre_save_pending_world';
   end if;
-  if has_function_privilege(
+  if not has_function_privilege(
        'anon',
        'public.apply_world_poll_result(uuid, boolean, text, text, text, text, text, text, text, text)',
        'EXECUTE'
      ) then
-    raise exception 'anon must not execute apply_world_poll_result';
+    raise exception 'anon missing apply_world_poll_result';
   end if;
   if not has_function_privilege(
-       'service_role',
+       'anon',
        'public.lookup_world_by_repo_url(text)',
        'EXECUTE'
      ) then
-    raise exception 'service_role missing lookup_world_by_repo_url';
+    raise exception 'anon missing lookup_world_by_repo_url';
+  end if;
+  if has_function_privilege(
+       'anon',
+       'public.create_payment(text, integer, text, text, text, uuid)',
+       'EXECUTE'
+     )
+     or has_function_privilege(
+       'authenticated',
+       'public.create_payment(text, integer, text, text, text, uuid)',
+       'EXECUTE'
+     ) then
+    raise exception 'clients must not execute create_payment';
+  end if;
+  if not has_function_privilege(
+       'authenticated',
+       'public.create_my_payment(text, integer)',
+       'EXECUTE'
+     ) then
+    raise exception 'authenticated missing create_my_payment';
   end if;
 end
 $$;

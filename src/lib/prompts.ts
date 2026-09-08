@@ -92,6 +92,76 @@ function indexFiles(index: RepositoryIndexInitRepo): RepoIndexFileEntry[] {
   return index.files?.index ?? [];
 }
 
+function isNoiseFile(file: RepoIndexFileEntry): boolean {
+  const path = file.path.toLowerCase();
+  const name = (file.name || path.split("/").pop() || "").toLowerCase();
+  if (
+    path.includes("node_modules/") ||
+    path.includes("/dist/") ||
+    path.startsWith("dist/") ||
+    path.includes("/build/") ||
+    path.startsWith("build/") ||
+    path.includes("/.git/") ||
+    path.startsWith(".git/")
+  ) {
+    return true;
+  }
+  if (name.endsWith(".lock") || /[-_]lock\./.test(name) || name.includes("lockfile")) return true;
+  if (/\.min\.(js|css|mjs|cjs)$/i.test(name) || name.includes(".min.")) return true;
+  return false;
+}
+
+export function notableIndexFiles(files: RepoIndexFileEntry[], limit = 6): RepoIndexFileEntry[] {
+  return [...files]
+    .filter((file) => !isNoiseFile(file))
+    .sort((a, b) => {
+      const sizeA = a.sizeBytes;
+      const sizeB = b.sizeBytes;
+      const hasA = typeof sizeA === "number";
+      const hasB = typeof sizeB === "number";
+      if (hasA && hasB && sizeA !== sizeB) return sizeB - sizeA;
+      if (hasA !== hasB) return hasA ? -1 : 1;
+      return a.path.localeCompare(b.path);
+    })
+    .slice(0, limit);
+}
+
+function humanizeBasename(file: RepoIndexFileEntry): string {
+  const raw = file.name || file.path.split("/").filter(Boolean).pop() || "file";
+  const stem = raw
+    .replace(/\.[^.]+$/, "")
+    .replace(/[-_]+/g, " ")
+    .trim();
+  return stem || raw;
+}
+
+function buildingTypeForFile(file: RepoIndexFileEntry): string {
+  const lang = (file.language || file.ext || "").replace(/^\./, "").toLowerCase();
+  const types: Record<string, string> = {
+    tsx: "keep",
+    jsx: "keep",
+    ts: "mill",
+    js: "mill",
+    py: "observatory",
+    python: "observatory",
+    rs: "foundry",
+    rust: "foundry",
+    go: "warehouse",
+    md: "library",
+    markdown: "library",
+    sql: "cistern",
+    css: "atelier",
+    json: "archive",
+  };
+  return types[lang] ?? "hall";
+}
+
+export function namedBuildingForFile(file: RepoIndexFileEntry): string {
+  const lang = (file.language || file.ext || "").replace(/^\./, "").toLowerCase();
+  const type = buildingTypeForFile(file);
+  return lang ? `${humanizeBasename(file)} ${type} (${lang})` : `${humanizeBasename(file)} ${type}`;
+}
+
 function languageCounts(files: RepoIndexFileEntry[]): LangCount[] {
   const counts = new Map<string, number>();
   for (const file of files) {
@@ -503,6 +573,9 @@ export function compileLandscapeScene(input: LandscapePromptInput): CompiledLand
       .map((f) => f.path)
       .sort()
       .join("|"),
+    notableIndexFiles(files)
+      .map((f) => f.path)
+      .join("|"),
   ].join("::");
 
   const { scale, buildingCount } = settlement(fileCount);
@@ -520,35 +593,34 @@ export function compileLandscapeScene(input: LandscapePromptInput): CompiledLand
     .slice(0, 8)
     .map((f) => `${f.folder}:${f.count}`)
     .join(", ");
-  const essence = cleanText(index.description ?? "");
+  const notable = notableIndexFiles(files);
+  const namedBuildings = notable.map(namedBuildingForFile);
   const documentedNotes = documentedFiles
     .filter((f) => f.description)
     .slice(0, 3)
     .map((f) => cleanText(`${f.file_name}: ${f.description}`, 90))
     .filter(Boolean);
 
-  const prompt = [
-    "Explorable outdoor landscape, ground plane and open sky, walkable terrain.",
-    "Not an indoor office, not a UI mockup, not a HUD, not a product render.",
-    `Place inspired by ${placeName}.`,
-    `Settlement: ${scale} of about ${buildingCount} buildings, ${skyline}.`,
-    `Time and climate: ${timeOfDay}, ${weather}.`,
-    `Landform: ${biome}.`,
-    `Architecture: ${architecture}.`,
-    districts.length ? `Districts from the repo tree: ${districts.join("; ")}.` : "",
-    landmarks.length ? `Landmarks from CodeFundi stack/dependencies: ${landmarks.join("; ")}.` : "",
-    essence ? `Atmosphere from the CodeFundi description: ${essence}.` : "",
-    blueprint?.readme
-      ? `Notes from the CodeFundi blueprint README: ${cleanText(blueprint.readme, 220)}.`
-      : "",
-    languages ? `Material accents follow languages ${languages}.` : "",
-    folderSummary ? `Top-level areas ${folderSummary}.` : "",
-    documentedNotes.length ? `File notes from CodeFundi: ${documentedNotes.join("; ")}.` : "",
-    `CodeFundi counted about ${fileCount} files on branch ${index.branch || "main"}.`,
-    "Natural lighting, coherent geography, rich mid-ground detail, no floating text, no screenshots of code.",
-  ]
-    .filter(Boolean)
-    .join(" ");
+  const prompt = joinLandscapePrompt({
+    placeName,
+    scale,
+    buildingCount,
+    skyline,
+    timeOfDay,
+    weather,
+    biome,
+    architecture,
+    districts,
+    landmarks,
+    namedBuildings,
+    essence: index.description ?? "",
+    readme: blueprint?.readme ?? "",
+    languages,
+    folderSummary,
+    documentedNotes,
+    fileCount,
+    branch: index.branch || "main",
+  });
 
   return {
     placeName,
@@ -564,8 +636,71 @@ export function compileLandscapeScene(input: LandscapePromptInput): CompiledLand
     landmarks,
     languages,
     folders: folderSummary,
-    prompt: prompt.slice(0, 2000),
+    prompt,
   };
+}
+
+function joinLandscapePrompt(input: {
+  placeName: string;
+  scale: string;
+  buildingCount: number;
+  skyline: string;
+  timeOfDay: string;
+  weather: string;
+  biome: string;
+  architecture: string;
+  districts: string[];
+  landmarks: string[];
+  namedBuildings: string[];
+  essence: string;
+  readme: string;
+  languages: string;
+  folderSummary: string;
+  documentedNotes: string[];
+  fileCount: number;
+  branch: string;
+}): string {
+  const assemble = (essenceMax: number, readmeMax: number) => {
+    const essence = cleanText(input.essence, essenceMax);
+    const readme = cleanText(input.readme, readmeMax);
+    return [
+      "Explorable outdoor landscape, ground plane and open sky, walkable terrain.",
+      "Not an indoor office, not a UI mockup, not a HUD, not a product render.",
+      `Place inspired by ${input.placeName}.`,
+      `Settlement: ${input.scale} of about ${input.buildingCount} buildings, ${input.skyline}.`,
+      `Time and climate: ${input.timeOfDay}, ${input.weather}.`,
+      `Landform: ${input.biome}.`,
+      `Architecture: ${input.architecture}.`,
+      input.districts.length ? `Districts from the repo tree: ${input.districts.join("; ")}.` : "",
+      input.landmarks.length
+        ? `Landmarks from CodeFundi stack/dependencies: ${input.landmarks.join("; ")}.`
+        : "",
+      input.namedBuildings.length
+        ? `Named buildings from notable files: ${input.namedBuildings.join("; ")}.`
+        : "",
+      essence ? `Atmosphere from the CodeFundi description: ${essence}.` : "",
+      readme ? `Notes from the CodeFundi blueprint README: ${readme}.` : "",
+      input.languages ? `Material accents follow languages ${input.languages}.` : "",
+      input.folderSummary ? `Top-level areas ${input.folderSummary}.` : "",
+      input.documentedNotes.length
+        ? `File notes from CodeFundi: ${input.documentedNotes.join("; ")}.`
+        : "",
+      `CodeFundi counted about ${input.fileCount} files on branch ${input.branch}.`,
+      "Natural lighting, coherent geography, rich mid-ground detail, no floating text, no screenshots of code.",
+    ]
+      .filter(Boolean)
+      .join(" ");
+  };
+
+  for (const [essenceMax, readmeMax] of [
+    [280, 220],
+    [120, 80],
+    [60, 0],
+  ] as const) {
+    const prompt = assemble(essenceMax, readmeMax);
+    if (prompt.length <= 2000) return prompt;
+  }
+  return assemble(40, 0).slice(0, 2000);
 }
 
 /**

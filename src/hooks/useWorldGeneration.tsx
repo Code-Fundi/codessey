@@ -1,16 +1,38 @@
 "use client";
 
-import { createContext, useCallback, useContext, useMemo, useRef, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { toast } from "sonner";
 import type { WorldRow } from "@/lib/database.types";
 import type { BillingSource, GenerationMode } from "@/lib/generation";
 import { MISSING_WORLD_LABS_KEY } from "@/lib/generation";
+import { ensureDesktopNotifyPermission, notifyWorldComplete } from "@/lib/desktop-notify";
+import {
+  jobFromWorldRow,
+  jobLabel,
+  markWorldNotified,
+  readGenerationJobs,
+  upsertGenerationJob,
+  wasWorldNotified,
+  writeGenerationJobs,
+  type GenerationJob,
+} from "@/lib/generation-jobs";
 import { setCache, type CachedWorld } from "@/lib/localStorage";
 import { cachedWorldFromRow } from "@/lib/cached-world";
 import type { RepositoryIndexInitRepo } from "@/lib/codefundi.client";
 import { buildLandscapePrompt, hasBlueprintPayload, type RepoBlueprint } from "@/lib/prompts";
 import { publicRepoToast } from "@/lib/public-repo";
+import { githubPathForRepo } from "@/lib/repo-url";
 import { indexRepoPayload } from "@/lib/codefundi-index";
+import { isWorldLabsModel } from "@/lib/marble-model";
+import { persistWorldMarbleModel } from "@/lib/world-meta";
 import { asTrimmed } from "@/lib/utils";
 import { decidePollTick, logPollTick } from "@/lib/world-poll";
 import {
@@ -19,6 +41,7 @@ import {
   preSavePendingWorld,
 } from "@/lib/worlds.client";
 import { getWorldLabsBrowserKey } from "@/lib/worldlabs-key";
+import { useWorldRowsSubscription } from "@/hooks/useWorldRowSubscription";
 import {
   createWorldLabsClient,
   unwrapWorld,
@@ -40,6 +63,22 @@ function toCached(row: WorldRow, branch: string): CachedWorld {
   return cachedWorldFromRow(row, branch);
 }
 
+function markCachedJob(
+  cached: CachedWorld | null,
+  repoUrl: string,
+  upsert: (job: GenerationJob) => void,
+) {
+  if (!cached?.id) return;
+  upsert({
+    id: cached.id,
+    repoUrl: cached.repoUrl || repoUrl,
+    repoName: jobLabel(cached.repoUrl || repoUrl, cached.repoName),
+    status: cached.status === "failed" ? "failed" : "complete",
+    progress: cached.progress ?? "World ready.",
+    updatedAt: Date.now(),
+  });
+}
+
 export type GeneratePendingHandler = (world: CachedWorld, row: WorldRow) => void;
 
 interface WorldGenerationValue {
@@ -54,6 +93,8 @@ interface WorldGenerationValue {
   generatingId: string | null;
   generatingWorld: CachedWorld | null;
   generatingRepoUrl: string | null;
+  jobs: GenerationJob[];
+  dismissJob: (id: string) => void;
 }
 
 const WorldGenerationContext = createContext<WorldGenerationValue | null>(null);
@@ -64,8 +105,66 @@ export function WorldGenerationProvider({ children }: { children: React.ReactNod
   const [generatingId, setGeneratingId] = useState<string | null>(null);
   const [generatingWorld, setGeneratingWorld] = useState<CachedWorld | null>(null);
   const [generatingRepoUrl, setGeneratingRepoUrl] = useState<string | null>(null);
+  const [jobs, setJobs] = useState<GenerationJob[]>([]);
   const inFlightRef = useRef(false);
   const generatingWorldRef = useRef<CachedWorld | null>(null);
+
+  const persistJobs = useCallback((next: GenerationJob[]) => {
+    writeGenerationJobs(next);
+    return next;
+  }, []);
+
+  const announceComplete = useCallback((job: GenerationJob) => {
+    if (job.status !== "complete") return;
+    if (wasWorldNotified(job.id)) return;
+    markWorldNotified(job.id);
+    notifyWorldComplete({
+      tag: `codessey-world-${job.id}`,
+      title: "Codessey world ready",
+      body: `${job.repoName} finished generating.`,
+      url: githubPathForRepo(job.repoUrl),
+    });
+  }, []);
+
+  const upsertJob = useCallback(
+    (job: GenerationJob) => {
+      setJobs((current) => {
+        const prev = current.find((item) => item.id === job.id);
+        if (job.status === "complete" && prev?.status === "pending") {
+          announceComplete(job);
+        }
+        return persistJobs(upsertGenerationJob(current, job));
+      });
+    },
+    [announceComplete, persistJobs],
+  );
+
+  const dismissJob = useCallback(
+    (id: string) => {
+      setJobs((current) => persistJobs(current.filter((job) => job.id !== id)));
+    },
+    [persistJobs],
+  );
+
+  const handleJobRow = useCallback(
+    (row: WorldRow) => {
+      const job = jobFromWorldRow(row);
+      upsertJob(job);
+      if (row.id === generatingWorldRef.current?.id) {
+        const cached = toCached(row, row.branch ?? "");
+        generatingWorldRef.current = cached;
+        setGeneratingWorld(cached);
+      }
+    },
+    [upsertJob],
+  );
+
+  useEffect(() => {
+    setJobs(readGenerationJobs());
+  }, []);
+
+  const pendingJobIds = jobs.filter((job) => job.status === "pending").map((job) => job.id);
+  useWorldRowsSubscription(pendingJobIds, handleJobRow);
 
   const generate = useCallback(
     async (
@@ -85,16 +184,21 @@ export function WorldGenerationProvider({ children }: { children: React.ReactNod
         return generatingWorldRef.current;
       }
 
+      void ensureDesktopNotifyPermission();
+
       inFlightRef.current = true;
       setIsGenerating(true);
       setProgress("Looking up existing world…");
       setGeneratingRepoUrl(url);
 
       const trackPending = (cached: CachedWorld, row: WorldRow) => {
-        generatingWorldRef.current = cached;
+        persistWorldMarbleModel(row.id, model);
+        const next = { ...cached, marbleModel: model };
+        generatingWorldRef.current = next;
         setGeneratingId(row.id);
-        setGeneratingWorld(cached);
-        onPending?.(cached, row);
+        setGeneratingWorld(next);
+        upsertJob(jobFromWorldRow(row));
+        onPending?.(next, row);
       };
 
       try {
@@ -113,7 +217,7 @@ export function WorldGenerationProvider({ children }: { children: React.ReactNod
         if (existing?.status === "pending" && existing.operation_id) {
           setProgress(existing.progress ?? "Resuming generation…");
           trackPending(toCached(existing, persistBranch), existing);
-          return pollUntilReady({
+          const resumed = await pollUntilReady({
             row: existing,
             url,
             branch: persistBranch,
@@ -121,6 +225,8 @@ export function WorldGenerationProvider({ children }: { children: React.ReactNod
             onPending: trackPending,
             setProgress,
           });
+          markCachedJob(resumed, url, upsertJob);
+          return resumed;
         }
 
         setProgress("Reading repository…");
@@ -203,7 +309,7 @@ export function WorldGenerationProvider({ children }: { children: React.ReactNod
         setProgress(row.progress ?? "Generating landscape…");
         trackPending(toCached(row, resolvedBranch), row);
 
-        return pollUntilReady({
+        const ready = await pollUntilReady({
           row,
           url,
           branch: resolvedBranch,
@@ -212,8 +318,21 @@ export function WorldGenerationProvider({ children }: { children: React.ReactNod
           onPending: trackPending,
           setProgress,
         });
+        markCachedJob(ready, url, upsertJob);
+        return ready;
       } catch (error) {
         toast.error(error instanceof Error ? error.message : "Generation failed.");
+        const current = generatingWorldRef.current;
+        if (current?.id) {
+          upsertJob({
+            id: current.id,
+            repoUrl: current.repoUrl || url,
+            repoName: jobLabel(current.repoUrl || url, current.repoName),
+            status: "failed",
+            progress: error instanceof Error ? error.message : "Generation failed.",
+            updatedAt: Date.now(),
+          });
+        }
         return null;
       } finally {
         inFlightRef.current = false;
@@ -225,7 +344,7 @@ export function WorldGenerationProvider({ children }: { children: React.ReactNod
         generatingWorldRef.current = null;
       }
     },
-    [],
+    [upsertJob],
   );
 
   const value = useMemo<WorldGenerationValue>(
@@ -236,8 +355,19 @@ export function WorldGenerationProvider({ children }: { children: React.ReactNod
       generatingId,
       generatingWorld,
       generatingRepoUrl,
+      jobs,
+      dismissJob,
     }),
-    [generate, isGenerating, progress, generatingId, generatingWorld, generatingRepoUrl],
+    [
+      generate,
+      isGenerating,
+      progress,
+      generatingId,
+      generatingWorld,
+      generatingRepoUrl,
+      jobs,
+      dismissJob,
+    ],
   );
 
   return (
@@ -316,6 +446,9 @@ async function pollUntilReady(input: {
     let fetchedWorld: World | null = null;
     if (metadataWorldId) {
       fetchedWorld = await fetchWorld(metadataWorldId);
+      if (fetchedWorld?.model && isWorldLabsModel(fetchedWorld.model)) {
+        persistWorldMarbleModel(row.id, fetchedWorld.model);
+      }
     }
 
     const decision = decidePollTick({

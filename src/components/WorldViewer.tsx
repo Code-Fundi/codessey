@@ -1,7 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
-import { ExternalLink, Link2, Loader2, Map, PenLine, Award } from "lucide-react";
+import {
+  ExternalLink,
+  Image as ImageIcon,
+  Link2,
+  Loader2,
+  Map,
+  PenLine,
+  Award,
+} from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { PostcardFront } from "@/components/BrandCard";
@@ -9,6 +17,7 @@ import { GuestbookSignDialog } from "@/components/GuestbookSignDialog";
 import { PostcardModal } from "@/components/PostcardModal";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useWallet } from "@/hooks/useWallet";
+import { useWorldSignatures } from "@/hooks/useWorldSignatures";
 import { ownerRepoHeading, viewerMedia } from "@/lib/cached-world";
 import type { CreditsDialogReason } from "@/components/CreditPurchaseDialog";
 import { PLAQUE_COINS } from "@/lib/generation";
@@ -51,6 +60,7 @@ export function WorldViewer({
   onPlaqueClaimed,
 }: WorldViewerProps) {
   const { user } = useWallet();
+  const { signatures } = useWorldSignatures(world?.id);
   const exportRef = useRef<HTMLDivElement>(null);
   const [postcardOpen, setPostcardOpen] = useState(false);
   const [guestbookOpen, setGuestbookOpen] = useState(false);
@@ -66,17 +76,20 @@ export function WorldViewer({
   });
   const heading = ownerRepoHeading(repoUrl ?? world?.repoUrl, repoName ?? world?.repoName);
   const imageUrl = proxiedPanoSrc(world?.panoUrl) ?? world?.thumbnailUrl ?? null;
-  const canDownload = Boolean(splatUrl || panoUrl) && !isGenerating && world?.status !== "pending";
+  const worldReady = world?.status === "complete" && Boolean(splatUrl || panoUrl);
+  const canDownload = worldReady;
   const canClaimPlaque =
     Boolean(user) &&
-    world?.status === "complete" &&
-    Boolean(world.userId) &&
-    world.userId === user?.id &&
-    !world.discoveredBy;
+    worldReady &&
+    Boolean(world?.userId) &&
+    world?.userId === user?.id &&
+    !world?.discoveredBy;
   const shareSource = repoUrl ?? world?.repoUrl ?? "";
   const shareUrl = codesseyShareUrl(shareSource);
   const shareText = codesseyShareText(shareSource);
-  const canShare = Boolean(shareUrl) && world?.status === "complete" && !isGenerating;
+  const canShare = Boolean(shareUrl) && worldReady;
+  const mySignature = user ? signatures.find((row) => row.user_id === user.id) : undefined;
+  const hasSigned = Boolean(signatureSrc || mySignature?.signature_png);
 
   useEffect(() => {
     setCapturedUrl(null);
@@ -85,12 +98,17 @@ export function WorldViewer({
     setSignatureSrc(null);
   }, [world?.id]);
 
+  useEffect(() => {
+    if (mySignature?.signature_png) setSignatureSrc(mySignature.signature_png);
+  }, [mySignature?.signature_png]);
+
   const showDeed = useCallback(
     async (nextSignature: string) => {
-      const src = proxiedPanoSrc(world?.panoUrl);
-      await preloadPostcardAssets(src);
       setSignatureSrc(nextSignature);
       setPostcardOpen(true);
+      if (capturedUrl && signatureSrc === nextSignature) return;
+      const src = proxiedPanoSrc(world?.panoUrl);
+      await preloadPostcardAssets(src);
       await new Promise((resolve) => window.requestAnimationFrame(() => resolve(undefined)));
       await new Promise((resolve) => window.setTimeout(resolve, 80));
       const node = exportRef.current;
@@ -102,8 +120,20 @@ export function WorldViewer({
         return objectUrl;
       });
     },
-    [world?.panoUrl],
+    [capturedUrl, signatureSrc, world?.panoUrl],
   );
+
+  const openPostcard = useCallback(() => {
+    const sig = signatureSrc || mySignature?.signature_png;
+    if (!sig || busy) return;
+    if (!user) {
+      onNeedSignIn();
+      return;
+    }
+    void showDeed(sig).catch((error) => {
+      toast.error(error instanceof Error ? error.message : "Could not open postcard.");
+    });
+  }, [busy, mySignature?.signature_png, onNeedSignIn, showDeed, signatureSrc, user]);
 
   const openGuestbook = useCallback(() => {
     if (!canDownload || busy) return;
@@ -189,27 +219,54 @@ export function WorldViewer({
     }
     if (pendingRetry.current && canDownload && !busy) {
       pendingRetry.current = false;
-      openGuestbook();
+      if (hasSigned) openPostcard();
+      else openGuestbook();
     }
-  }, [retryNonce, canDownload, busy, openGuestbook]);
+  }, [retryNonce, canDownload, busy, hasSigned, openGuestbook, openPostcard]);
 
   return (
-    <section className="relative h-full w-full flex flex-col items-center p-3 sm:p-4 md:p-6 overflow-hidden">
+    <section className="relative h-full w-full overflow-hidden bg-black/40">
       <div className="pointer-events-none absolute inset-0 radial-blue" />
 
+      <div className="absolute inset-0">
+        {splatUrl ? (
+          <SparkCanvas splatUrl={splatUrl} />
+        ) : panoUrl && world?.status !== "pending" ? (
+          <img src={panoUrl} alt="" className="absolute inset-0 h-full w-full object-cover" />
+        ) : (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-6 text-center">
+            {isGenerating ? (
+              <>
+                <Loader2 className="h-8 w-8 animate-spin text-blue-400" />
+                <p className="text-sm text-white/80">{progress ?? "Generating landscape…"}</p>
+                <p className="text-xs text-white/55 max-w-sm">
+                  World generation in progress. You can keep browsing while you wait.
+                </p>
+              </>
+            ) : (
+              <>
+                <Map className="h-8 w-8 text-white/30" />
+                <p className="text-sm text-white/70">Generate a world from Create World.</p>
+                <p className="text-xs text-white/40">The landscape will appear here.</p>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+
       {heading && (
-        <div className="relative shrink-0 mb-2 text-xs text-white/40 font-display uppercase tracking-[0.3em] text-center">
+        <div className="pointer-events-none absolute top-3 left-3 right-28 z-[2] text-xs text-white/70 font-display uppercase tracking-[0.3em] text-center drop-shadow-[0_1px_8px_rgba(0,0,0,0.8)]">
           {heading}
         </div>
       )}
 
-      <div className="relative flex-1 min-h-0 w-full rounded-2xl overflow-hidden border border-white/10 bg-black/40">
-        {world?.discoveredBy && !isGenerating && (
-          <div className="absolute bottom-3 left-3 z-[2] rounded-md border border-amber-400/30 bg-black/55 px-2.5 py-1.5 text-[11px] uppercase tracking-[0.16em] text-amber-100/90">
+      <div className="absolute top-2 right-2 z-[3] flex items-center gap-2 max-w-[min(100%,calc(100%-1rem))]">
+        {world?.discoveredBy && worldReady && (
+          <div className="rounded-md border border-amber-400/30 bg-black/55 px-2.5 py-1.5 text-[11px] uppercase tracking-[0.16em] text-amber-100/90 truncate">
             Discovered by @{world.discoveredBy}
           </div>
         )}
-        {world?.marbleUrl && !isGenerating && (
+        {world?.marbleUrl && worldReady && (
           <TooltipProvider delayDuration={200}>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -219,7 +276,7 @@ export function WorldViewer({
                   rel="noopener noreferrer"
                   aria-label="Open in Marble"
                   title="Open in Marble"
-                  className="absolute top-2 right-2 z-[2] inline-flex h-8 w-8 items-center justify-center rounded-md border border-white/15 bg-black/40 text-white/80"
+                  className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-white/15 bg-black/40 text-white/80"
                 >
                   <ExternalLink size={14} />
                 </a>
@@ -228,33 +285,10 @@ export function WorldViewer({
             </Tooltip>
           </TooltipProvider>
         )}
-        {splatUrl && !isGenerating ? (
-          <SparkCanvas splatUrl={splatUrl} />
-        ) : panoUrl && !isGenerating ? (
-          <img src={panoUrl} alt="" className="absolute inset-0 h-full w-full object-cover" />
-        ) : (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-6 text-center">
-            {isGenerating ? (
-              <>
-                <Loader2 className="h-8 w-8 animate-spin text-blue-400" />
-                <p className="text-sm text-white/80">{progress ?? "Generating landscape…"}</p>
-                <p className="text-xs text-white/55 max-w-sm">
-                  World generation in progress. You can reload this page while you wait.
-                </p>
-              </>
-            ) : (
-              <>
-                <Map className="h-8 w-8 text-white/30" />
-                <p className="text-sm text-white/70">Generate a world from Indexed Repos.</p>
-                <p className="text-xs text-white/40">The landscape will appear here.</p>
-              </>
-            )}
-          </div>
-        )}
       </div>
 
       {(canDownload || canShare) && (
-        <div className="relative shrink-0 mt-3 flex flex-wrap items-center justify-center gap-2">
+        <div className="absolute bottom-3 inset-x-0 z-[2] flex flex-wrap items-center justify-center gap-2 px-3">
           {canDownload && (
             <>
               <Button
@@ -263,15 +297,17 @@ export function WorldViewer({
                 size="sm"
                 disabled={busy}
                 data-tour="guestbook"
-                onClick={openGuestbook}
-                className="bg-transparent border-white/15 text-white/85 hover:bg-white/5 hover:text-white"
+                onClick={hasSigned ? openPostcard : openGuestbook}
+                className="bg-black/45 backdrop-blur-sm border-white/15 text-white/85 hover:bg-white/10 hover:text-white"
               >
                 {busy ? (
                   <Loader2 size={14} className="mr-1.5 animate-spin" />
+                ) : hasSigned ? (
+                  <ImageIcon size={14} className="mr-1.5" />
                 ) : (
                   <PenLine size={14} className="mr-1.5" />
                 )}
-                Sign Guestbook
+                {hasSigned ? "Download Postcard" : "Sign Guestbook"}
               </Button>
               {canClaimPlaque && (
                 <Button
@@ -280,7 +316,7 @@ export function WorldViewer({
                   size="sm"
                   disabled={busy}
                   onClick={() => void claimPlaque()}
-                  className="bg-transparent border-white/15 text-white/85 hover:bg-white/5 hover:text-white"
+                  className="bg-black/45 backdrop-blur-sm border-white/15 text-white/85 hover:bg-white/10 hover:text-white"
                 >
                   {busy ? (
                     <Loader2 size={14} className="mr-1.5 animate-spin" />
@@ -294,14 +330,14 @@ export function WorldViewer({
           )}
           {canShare && shareUrl && (
             <>
-              <span className="text-[11px] uppercase tracking-[0.16em] text-white/40">
+              <span className="text-[11px] uppercase tracking-[0.16em] text-white/70">
                 Share on
               </span>
               <Button
                 asChild
                 variant="outline"
                 size="sm"
-                className="bg-transparent border-white/15 text-white/85 hover:bg-white/5 hover:text-white"
+                className="bg-black/45 backdrop-blur-sm border-white/15 text-white/85 hover:bg-white/10 hover:text-white"
               >
                 <a
                   href={twitterShareHref(shareText, shareUrl)}
@@ -316,7 +352,7 @@ export function WorldViewer({
                 asChild
                 variant="outline"
                 size="sm"
-                className="bg-transparent border-white/15 text-white/85 hover:bg-white/5 hover:text-white"
+                className="bg-black/45 backdrop-blur-sm border-white/15 text-white/85 hover:bg-white/10 hover:text-white"
               >
                 <a href={facebookShareHref(shareUrl)} target="_blank" rel="noopener noreferrer">
                   <FacebookLogo />
@@ -333,7 +369,7 @@ export function WorldViewer({
                     () => toast.error("Could not copy link."),
                   );
                 }}
-                className="bg-transparent border-white/15 text-white/85 hover:bg-white/5 hover:text-white"
+                className="bg-black/45 backdrop-blur-sm border-white/15 text-white/85 hover:bg-white/10 hover:text-white"
               >
                 <Link2 size={14} className="mr-1.5" />
                 Copy link
@@ -438,6 +474,21 @@ function SparkCanvas({ splatUrl }: { splatUrl: string }) {
         renderer.setSize(wrap.clientWidth, wrap.clientHeight, false);
       };
       window.addEventListener("resize", resize);
+      const observer = new ResizeObserver(resize);
+      observer.observe(wrap);
+      resize();
+
+      let mesh: InstanceType<typeof SplatMesh> | null = null;
+      cleanup = () => {
+        window.removeEventListener("resize", resize);
+        observer.disconnect();
+        renderer.setAnimationLoop(null);
+        if (mesh) {
+          scene.remove(mesh);
+          mesh.dispose?.();
+        }
+        renderer.dispose();
+      };
 
       const controls = new SparkControls({ canvas });
       const loader = new SplatLoader();
@@ -449,7 +500,7 @@ function SparkCanvas({ splatUrl }: { splatUrl: string }) {
         throw new Error("Unsupported splat format.");
       }
 
-      const mesh = new SplatMesh({ packedSplats: decoded });
+      mesh = new SplatMesh({ packedSplats: decoded });
       mesh.quaternion.set(1, 0, 0, 0);
       scene.add(mesh);
       camera.position.set(0, 0, 0);
@@ -460,14 +511,6 @@ function SparkCanvas({ splatUrl }: { splatUrl: string }) {
         controls.update(camera);
         renderer.render(scene, camera);
       });
-
-      cleanup = () => {
-        window.removeEventListener("resize", resize);
-        renderer.setAnimationLoop(null);
-        scene.remove(mesh);
-        mesh.dispose?.();
-        renderer.dispose();
-      };
     };
 
     void start().catch(() => {

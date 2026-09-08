@@ -16,7 +16,7 @@ const STEPS = [
   {
     id: "repos",
     selector: "[data-tour='repos']",
-    title: "Indexed Repos",
+    title: "Create World",
     body: "Paste a public GitHub URL and generate a 3D world from the repository.",
   },
   {

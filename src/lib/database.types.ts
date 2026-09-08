@@ -129,6 +129,7 @@ export interface WorldRow {
   marble_url: string | null;
   pano_url: string | null;
   generation_mode?: WorldGenerationMode;
+  marble_model?: string | null;
   billing_source?: WorldBillingSource;
   is_public: boolean;
   discovered_by?: string | null;

@@ -1,24 +1,29 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Globe, Loader2, PenLine, Search, Sparkles } from "lucide-react";
+import { Globe, Loader2, Search, Sparkles } from "lucide-react";
+import { GuestbookSidebarList } from "@/components/GuestbookSidebarList";
+import { BlurUpImage } from "@/components/BlurUpImage";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
-import type { WorldRow, WorldSignatureRow } from "@/lib/database.types";
+import type { WorldRow } from "@/lib/database.types";
 import {
   MARBLE_MODEL_CHOICES,
+  marbleModelLabel,
   persistMarbleModel,
   persistWorldGenKind,
   readStoredMarbleModel,
   readStoredWorldGenKind,
   resolveWorldLabsModel,
+  worldTypeLabel,
   type MarbleModelChoice,
   type WorldGenKind,
 } from "@/lib/marble-model";
 import { parseGithubOwnerRepo, repoNameFromUrl } from "@/lib/repo-url";
 import { cn } from "@/lib/utils";
+import type { GenerationMode } from "@/lib/generation";
 import type { WorldLabsModel } from "@/lib/worldlabs.client";
 
 export type MainTab = "explore" | "repos";
@@ -42,9 +47,10 @@ interface RepoPanelProps {
   onSearchWorlds: () => void;
   onGenerate: (model: WorldLabsModel) => void;
   onGenerateNewWorld?: () => void;
-  generatingLabel?: string | null;
-  signatures?: WorldSignatureRow[];
-  onJumpToGenerating?: () => void;
+  worldId?: string | null;
+  guestbookTick?: number;
+  generationMode?: GenerationMode | null;
+  marbleModel?: string | null;
 }
 
 export function RepoPanel(props: RepoPanelProps) {
@@ -67,9 +73,10 @@ export function RepoPanel(props: RepoPanelProps) {
     onSearchWorlds,
     onGenerate,
     onGenerateNewWorld,
-    generatingLabel,
-    signatures = [],
-    onJumpToGenerating,
+    worldId = null,
+    guestbookTick = 0,
+    generationMode = null,
+    marbleModel = null,
   } = props;
 
   const [modelChoice, setModelChoice] = useState<MarbleModelChoice>("1.1");
@@ -82,7 +89,9 @@ export function RepoPanel(props: RepoPanelProps) {
 
   const variableAllowed = modelChoice === "1.1";
   const inputsDisabled = isGenerating || formLocked;
-  const showNewWorld = formLocked && !isGenerating;
+  const showGuestbook = formLocked;
+  const typeChip = worldTypeLabel(generationMode, marbleModel);
+  const modelChip = marbleModelLabel(marbleModel);
 
   const selectModel = (choice: MarbleModelChoice) => {
     setModelChoice(choice);
@@ -124,67 +133,29 @@ export function RepoPanel(props: RepoPanelProps) {
             tab === "repos" ? "text-white bg-white/10" : "text-white/45 hover:text-white/70",
           )}
         >
-          Indexed Repos
+          Create World
         </button>
         {(worldsLoading || isGenerating) && (
           <Loader2 size={12} className="text-blue-400 animate-spin" />
         )}
       </div>
 
-      {generatingLabel && onJumpToGenerating && (
-        <button
-          type="button"
-          onClick={onJumpToGenerating}
-          className="mt-3 rounded-lg border border-blue-400/30 bg-blue-500/10 px-3 py-2 text-left text-[11px] text-blue-100/90 hover:bg-blue-500/20"
-        >
-          Generating {generatingLabel}…
-        </button>
-      )}
-
       <Separator className="my-3 bg-white/10" />
 
       <div className="flex-1 min-h-0 overflow-y-auto scrollbar-thin -mx-1 px-1">
         {tab === "repos" ? (
-          <div className="px-1 py-2 space-y-3">
-            <p className="text-sm text-white/70">Generate a landscape from a GitHub repository.</p>
-            <p className="text-xs text-white/45 leading-relaxed">
-              Add your World Labs key to generate a landscape. Guestbook signatures and founder
-              plaques cost 1 credit after you sign in.
-            </p>
-            {signatures.length > 0 && (
-              <div className="pt-2 space-y-2">
-                <p className="text-[10px] uppercase tracking-[0.14em] text-white/40 font-medium">
-                  Guestbook
-                </p>
-                <ul className="space-y-2">
-                  {signatures.map((entry) => (
-                    <li
-                      key={entry.id}
-                      className="rounded-xl border border-white/5 bg-white/[0.03] p-3"
-                    >
-                      <div className="flex items-center gap-2">
-                        {entry.signature_png ? (
-                          <img
-                            src={entry.signature_png}
-                            alt=""
-                            className="h-10 w-14 rounded-md object-contain bg-white"
-                          />
-                        ) : (
-                          <PenLine size={16} className="text-white/40" />
-                        )}
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm font-semibold text-white truncate">
-                            @{entry.github_username}
-                          </p>
-                          <p className="text-[11px] text-white/55 line-clamp-2">{entry.message}</p>
-                        </div>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </div>
+          showGuestbook ? (
+            <GuestbookSidebarList worldId={worldId} refreshNonce={guestbookTick} />
+          ) : (
+            <div className="px-1 py-2 space-y-3">
+              <p className="text-sm text-white/70">
+                Generate a landscape from a GitHub repository.
+              </p>
+              <p className="text-xs text-white/45 leading-relaxed">
+                Add your World Labs key to generate a landscape.
+              </p>
+            </div>
+          )
         ) : (
           <>
             <label className="block px-1 pb-3">
@@ -221,7 +192,7 @@ export function RepoPanel(props: RepoPanelProps) {
               {!worldsLoading && !worlds.length && !worldsError && (
                 <li>
                   <p className="text-sm text-white/45 p-3">
-                    No worlds match yet. Open Indexed Repos to generate one.
+                    No worlds match yet. Open Create World to generate one.
                   </p>
                 </li>
               )}
@@ -239,11 +210,13 @@ export function RepoPanel(props: RepoPanelProps) {
                   >
                     <div className="flex items-center gap-2">
                       {row.pano_url || row.thumbnail_url ? (
-                        <img
-                          src={(row.pano_url || row.thumbnail_url) as string}
-                          alt=""
-                          className="h-10 w-10 rounded-md object-cover"
-                        />
+                        <div className="relative h-10 w-10 overflow-hidden rounded-md bg-white/10">
+                          <BlurUpImage
+                            src={(row.pano_url || row.thumbnail_url) as string}
+                            previewSrc={row.thumbnail_url}
+                            className="absolute inset-0 h-full w-full object-cover"
+                          />
+                        </div>
                       ) : (
                         <Globe size={16} className="text-white/40" />
                       )}
@@ -291,7 +264,28 @@ export function RepoPanel(props: RepoPanelProps) {
         </div>
       )}
 
-      {tab === "repos" && (
+      {tab === "repos" && showGuestbook && (
+        <div className="pt-4 space-y-3">
+          <div className="flex flex-wrap gap-1.5">
+            <span className="rounded-full bg-white/10 px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-white/80">
+              {typeChip}
+            </span>
+            {modelChip && (
+              <span className="rounded-full bg-white/10 px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-white/80">
+                {modelChip}
+              </span>
+            )}
+          </div>
+          <Button
+            onClick={onGenerateNewWorld}
+            className="w-full h-11 bg-amber-600 hover:bg-amber-700 text-white font-semibold shadow-[0_8px_32px_-12px_rgba(217,119,6,0.55)] transition-transform hover:scale-[1.01]"
+          >
+            <Sparkles size={16} className="mr-2" /> Generate New World
+          </Button>
+        </div>
+      )}
+
+      {tab === "repos" && !showGuestbook && (
         <div className="pt-4 space-y-3">
           <div className="space-y-2">
             <p className="text-[10px] uppercase tracking-[0.14em] text-white/40 font-medium">
@@ -350,7 +344,6 @@ export function RepoPanel(props: RepoPanelProps) {
               </button>
             </div>
             <p className="text-[11px] text-white/40 leading-relaxed">
-              These use World Labs credits on your key, not Codessey coins.
               {genKind === "variable"
                 ? " Variable sizing uses Marble 1.1 Plus and may add extra World Labs credits."
                 : ""}
@@ -380,31 +373,21 @@ export function RepoPanel(props: RepoPanelProps) {
               className="mt-1 h-10 bg-black/30 border-white/10 text-white"
             />
           </label>
-
-          {showNewWorld ? (
-            <Button
-              onClick={onGenerateNewWorld}
-              className="w-full h-11 bg-amber-600 hover:bg-amber-700 text-white font-semibold shadow-[0_8px_32px_-12px_rgba(217,119,6,0.55)] transition-transform hover:scale-[1.01]"
-            >
-              <Sparkles size={16} className="mr-2" /> Generate New World
-            </Button>
-          ) : (
-            <Button
-              onClick={() => onGenerate(resolveWorldLabsModel(modelChoice, genKind))}
-              disabled={isGenerating}
-              className="w-full h-11 bg-blue-700 hover:bg-blue-800 text-white font-semibold shadow-[0_8px_32px_-12px_rgba(37,99,235,0.55)] transition-transform hover:scale-[1.01] disabled:opacity-40 disabled:saturate-50 disabled:hover:scale-100"
-            >
-              {isGenerating ? (
-                <>
-                  <Loader2 size={16} className="mr-2 animate-spin" /> Generating…
-                </>
-              ) : (
-                <>
-                  <Sparkles size={16} className="mr-2" /> Generate World
-                </>
-              )}
-            </Button>
-          )}
+          <Button
+            onClick={() => onGenerate(resolveWorldLabsModel(modelChoice, genKind))}
+            disabled={isGenerating}
+            className="w-full h-11 bg-blue-700 hover:bg-blue-800 text-white font-semibold shadow-[0_8px_32px_-12px_rgba(37,99,235,0.55)] transition-transform hover:scale-[1.01] disabled:opacity-40 disabled:saturate-50 disabled:hover:scale-100"
+          >
+            {isGenerating ? (
+              <>
+                <Loader2 size={16} className="mr-2 animate-spin" /> Generating…
+              </>
+            ) : (
+              <>
+                <Sparkles size={16} className="mr-2" /> Generate World
+              </>
+            )}
+          </Button>
         </div>
       )}
     </aside>

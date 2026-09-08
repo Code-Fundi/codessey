@@ -1,5 +1,6 @@
 import { asTrimmed } from "@/lib/utils";
 import type { BillingSource, GenerationMode } from "@/lib/generation";
+import type { WorldLabsModel } from "@/lib/worldlabs.client";
 
 export interface CachedWorld {
   id?: string;
@@ -15,6 +16,7 @@ export interface CachedWorld {
   status?: "pending" | "complete" | "failed";
   progress?: string | null;
   generationMode?: GenerationMode;
+  marbleModel?: WorldLabsModel | null;
   billingSource?: BillingSource;
   repoUrl?: string | null;
   userId?: string | null;

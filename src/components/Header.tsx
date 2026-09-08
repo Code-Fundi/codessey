@@ -6,7 +6,9 @@ import { Twitter, Linkedin, Github, Coins } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AboutModal } from "./AboutModal";
 import { CreditPurchaseDialog, type CreditsDialogReason } from "./CreditPurchaseDialog";
+import { GenerationJobChips } from "@/components/GenerationJobChips";
 import { useWallet } from "@/hooks/useWallet";
+import { useWorldGeneration } from "@/hooks/useWorldGeneration";
 
 interface HeaderProps {
   creditsOpen: boolean;
@@ -22,11 +24,12 @@ export function Header({
   onPurchased,
 }: HeaderProps) {
   const { user, balance, secondsUntilRefresh, refresh } = useWallet();
+  const { jobs, dismissJob } = useWorldGeneration();
   const pathname = usePathname();
 
   return (
     <header className="fixed top-0 inset-x-0 h-14 z-40 flex items-center justify-between px-5 surface backdrop-blur-md">
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 min-w-0 flex-1 pr-3">
         <Link
           href="/"
           className="font-display text-xl font-extrabold tracking-[0.18em] gradient-text"
@@ -39,6 +42,7 @@ export function Header({
         >
           Rankings
         </Link>
+        <GenerationJobChips jobs={jobs} onDismiss={dismissJob} />
       </div>
 
       <div className="flex items-center gap-2">

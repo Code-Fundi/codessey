@@ -1,6 +1,7 @@
 "use client";
 
 import { Map } from "lucide-react";
+import { BlurUpImage } from "@/components/BlurUpImage";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { WorldRow } from "@/lib/database.types";
 import { parseGithubOwnerRepo, repoNameFromUrl } from "@/lib/repo-url";
@@ -88,10 +89,9 @@ function WorldPreviewCard({
         selected ? "border-blue-500/80 ring-1 ring-blue-500/40" : "border-white/10",
       )}
     >
-      <img
+      <BlurUpImage
         src={world.pano_url || world.thumbnail_url || "/map-bg.jpg"}
-        alt=""
-        draggable={false}
+        previewSrc={world.thumbnail_url}
         className="absolute inset-0 h-full w-full object-cover scale-[1.02] group-hover:scale-105 transition-transform duration-500"
       />
       {world.status === "pending" && (

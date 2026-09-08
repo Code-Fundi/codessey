@@ -7,6 +7,9 @@ import { asTrimmed } from "@/lib/utils";
 export const WORLD_SELECT =
   "id,user_id,repo_url,repo_url_norm,branch,repo_name,world_labs_id,operation_id,status,progress,splat_url,thumbnail_url,caption,marble_url,pano_url,generation_mode,billing_source,is_public,discovered_by,plaque_at,created_at,updated_at";
 
+export const SIGNATURE_SELECT =
+  "id,world_id,user_id,github_username,message,signature_png,created_at";
+
 export async function lookupWorldByRepoUrl(repoUrl: string): Promise<WorldRow | null> {
   const supabase = createSupabaseBrowserClient();
   const { data, error } = await supabase.rpc("lookup_world_by_repo_url", {

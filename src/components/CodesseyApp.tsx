@@ -13,16 +13,15 @@ import { useWorldGeneration } from "@/hooks/useWorldGeneration";
 import { useWorldRowSubscription } from "@/hooks/useWorldRowSubscription";
 import { useWallet } from "@/hooks/useWallet";
 import { usePublicWorlds } from "@/hooks/usePublicWorlds";
-import { cachedWorldFromRow } from "@/lib/cached-world";
+import { cachedWorldFromRow, viewerShowsGenerating } from "@/lib/cached-world";
 import type { WorldRow } from "@/lib/database.types";
 import { RETRY_GUESTBOOK_KEY, MISSING_WORLD_LABS_KEY } from "@/lib/generation";
 import { getWorldLabsBrowserKey } from "@/lib/worldlabs-key";
 import type { CachedWorld } from "@/lib/localStorage";
-import { githubPathForRepo, githubRepoUrl, parseGithubOwnerRepo } from "@/lib/repo-url";
+import { githubPathForRepo, githubRepoUrl } from "@/lib/repo-url";
 import { asTrimmed } from "@/lib/utils";
 import { lookupWorldByRepoUrl, recordWorldVisit } from "@/lib/worlds.client";
 import type { WorldLabsModel } from "@/lib/worldlabs.client";
-import { useWorldSignatures } from "@/hooks/useWorldSignatures";
 
 export function CodesseyApp({
   initialOwner,
@@ -32,8 +31,7 @@ export function CodesseyApp({
   initialRepo?: string;
 }) {
   const router = useRouter();
-  const { generate, isGenerating, progress, generatingId, generatingWorld, generatingRepoUrl } =
-    useWorldGeneration();
+  const { generate, isGenerating, progress, generatingId, generatingWorld } = useWorldGeneration();
   const { user, refresh } = useWallet();
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -49,6 +47,8 @@ export function CodesseyApp({
   );
   const [worldQuery, setWorldQuery] = useState("");
   const [guestbookRetry, setGuestbookRetry] = useState(0);
+  const [guestbookTick, setGuestbookTick] = useState(0);
+  const [routeWorldLoading, setRouteWorldLoading] = useState(Boolean(initialOwner && initialRepo));
   const hydratedPath = useRef<string | null>(null);
   const {
     worlds,
@@ -56,7 +56,6 @@ export function CodesseyApp({
     error: worldsError,
     refetch: refetchWorlds,
   } = usePublicWorlds(mainTab === "explore", worldQuery);
-  const { signatures, refetch: refetchSignatures } = useWorldSignatures(world?.id ?? null);
 
   const syncRepoPath = useCallback(
     (url: string) => {
@@ -82,7 +81,18 @@ export function CodesseyApp({
   const handleSelectWorld = useCallback(
     (row: WorldRow) => {
       applyRow(row);
+      if (row.status === "complete" || row.status === "pending") {
+        setMainTab("repos");
+      }
       if (row.id) void recordWorldVisit(row.id);
+      void lookupWorldByRepoUrl(row.repo_url)
+        .then((fresh) => {
+          if (!fresh) return;
+          applyRow(fresh, fresh.branch ?? "");
+        })
+        .catch(() => {
+          /* list row already applied */
+        });
     },
     [applyRow],
   );
@@ -117,6 +127,7 @@ export function CodesseyApp({
     const url = githubRepoUrl(initialOwner, initialRepo);
     setRepoUrl(url);
     setMainTab("repos");
+    setRouteWorldLoading(true);
 
     void (async () => {
       try {
@@ -148,6 +159,8 @@ export function CodesseyApp({
         }
       } catch (error) {
         toast.error(error instanceof Error ? error.message : "Lookup failed.");
+      } finally {
+        setRouteWorldLoading(false);
       }
     })();
   }, [
@@ -164,7 +177,12 @@ export function CodesseyApp({
   useEffect(() => {
     if (!generatingWorld || !generatingId) return;
     if (selectedId !== generatingId) return;
-    setWorld(generatingWorld);
+    setWorld((current) => {
+      if (current?.status === "complete" && generatingWorld.status !== "complete") {
+        return current;
+      }
+      return generatingWorld;
+    });
   }, [generatingWorld, generatingId, selectedId]);
 
   useEffect(() => {
@@ -211,9 +229,7 @@ export function CodesseyApp({
         repoUrl,
         branch,
         (pending) => {
-          setWorld(pending);
-          setSelectedId(pending.id ?? null);
-          syncRepoPath(repoUrl);
+          setWorld((current) => (current?.id === pending.id ? pending : current));
           void refetchWorlds();
         },
         model,
@@ -224,7 +240,7 @@ export function CodesseyApp({
         void refetchWorlds();
       }
     },
-    [generate, repoUrl, branch, refetchWorlds, syncRepoPath, handleCreditsOpenChange],
+    [generate, repoUrl, branch, refetchWorlds, handleCreditsOpenChange],
   );
 
   const handleNeedSignIn = useCallback(() => {
@@ -275,13 +291,10 @@ export function CodesseyApp({
     hasViewerWorld &&
     (world.status === "complete" || world.status === "pending" || viewingGenerating),
   );
-  const generatingParsed = generatingRepoUrl ? parseGithubOwnerRepo(generatingRepoUrl) : null;
-  const generatingLabel =
-    isGenerating && generatingParsed
-      ? `${generatingParsed.owner}/${generatingParsed.repo}`
-      : isGenerating && generatingRepoUrl
-        ? generatingRepoUrl
-        : null;
+  const viewerGenerating = viewerShowsGenerating(
+    world,
+    (viewingGenerating && isGenerating) || (isGenerating && !world && !routeWorldLoading),
+  );
 
   return (
     <div className="h-screen bg-[#090C10] text-foreground overflow-hidden">
@@ -312,19 +325,13 @@ export function CodesseyApp({
             onSearchWorlds={handleSearchWorlds}
             onGenerate={(model) => void handleGenerate(model)}
             onGenerateNewWorld={() => router.push("/")}
-            generatingLabel={generatingLabel}
-            signatures={signatures}
-            onJumpToGenerating={
-              generatingRepoUrl
-                ? () => {
-                    const path = githubPathForRepo(generatingRepoUrl);
-                    if (path) router.push(path);
-                  }
-                : undefined
-            }
+            worldId={world?.id ?? null}
+            guestbookTick={guestbookTick}
+            generationMode={world?.generationMode}
+            marbleModel={world?.marbleModel}
           />
         </div>
-        <div className="order-1 md:order-2 shrink-0 h-[min(52vh,520px)] md:h-full md:shrink overflow-hidden flex flex-col">
+        <div className="order-1 md:order-2 relative min-h-0 shrink-0 h-[min(52vh,520px)] md:h-full md:min-h-0 overflow-hidden">
           {showGallery ? (
             <WorldGallery
               worlds={worlds}
@@ -336,11 +343,9 @@ export function CodesseyApp({
           ) : (
             <WorldViewer
               world={world}
-              isGenerating={(viewingGenerating && isGenerating) || world?.status === "pending"}
+              isGenerating={viewerGenerating}
               progress={
-                viewingGenerating
-                  ? (progress ?? world?.progress ?? null)
-                  : (world?.progress ?? null)
+                viewerGenerating ? (progress ?? world?.progress ?? null) : (world?.progress ?? null)
               }
               repoUrl={world?.repoUrl ?? repoUrl}
               repoName={world?.repoName ?? null}
@@ -349,7 +354,7 @@ export function CodesseyApp({
               onNeedCredits={handleNeedCredits}
               onConsumed={() => {
                 void refresh();
-                void refetchSignatures();
+                setGuestbookTick((n) => n + 1);
               }}
               onPlaqueClaimed={(discoveredBy) => {
                 setWorld((current) => (current ? { ...current, discoveredBy } : current));

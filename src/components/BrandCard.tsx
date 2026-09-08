@@ -199,53 +199,53 @@ export function PostcardFront({
       )}
     >
       <div className="flex h-full w-full">
-        <div className="relative h-full w-3/4 overflow-hidden bg-zinc-900">
+        <div className="relative h-full w-2/3 overflow-hidden bg-zinc-900">
           <img
             src={imageUrl || "/map-bg.jpg"}
             alt=""
             draggable={false}
             className="absolute inset-0 h-full w-full object-cover"
           />
-          {signatureSrc ? (
-            <img
-              src={signatureSrc}
-              alt=""
-              draggable={false}
-              className="pointer-events-none absolute z-[2] w-[min(36%,9.5rem)] max-h-[28%] object-contain object-center select-none"
-              style={{
-                left: "33%",
-                top: "33%",
-                transform: "translate(-50%, -50%) rotate(-11deg)",
-                transformOrigin: "center",
-              }}
-            />
-          ) : null}
         </div>
-        <div className="relative flex h-full w-1/4 flex-col justify-between border-l border-zinc-300/70 bg-[#f7f1e6] px-3 py-4 sm:px-4 sm:py-5">
-          <div>
-            <p className="m-0 text-[10px] font-semibold uppercase tracking-[0.22em] text-zinc-500">
+        <div className="relative flex h-full w-1/3 min-w-0 flex-col justify-between border-l border-zinc-300/70 bg-[#f7f1e6] px-3 py-4 sm:px-4 sm:py-5">
+          <div className="min-h-0 flex-1 overflow-hidden flex flex-col">
+            <p className="m-0 text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-500">
               Greetings from
             </p>
-            <p className="mt-2 m-0 font-display text-[clamp(0.95rem,1.8vw,1.35rem)] font-extrabold uppercase leading-tight text-zinc-900 line-clamp-4">
+            <p className="mt-2 m-0 font-display text-[clamp(0.8rem,1.5vw,1.2rem)] font-extrabold uppercase leading-tight text-zinc-900 break-words [overflow-wrap:anywhere]">
               {name}
             </p>
             {caption ? (
-              <p className="mt-3 m-0 text-[10px] leading-snug text-zinc-600 line-clamp-5">
+              <p className="mt-3 m-0 min-h-0 flex-1 overflow-y-auto text-[10px] leading-snug text-zinc-600 break-words [overflow-wrap:anywhere]">
                 {caption}
               </p>
             ) : null}
           </div>
-          <div>
-            <p className="m-0 font-display text-sm font-extrabold uppercase tracking-[0.16em] text-zinc-800">
+          <div className="shrink-0 pt-3">
+            <p className="m-0 font-display text-sm font-extrabold uppercase tracking-[0.12em] text-zinc-800 break-words [overflow-wrap:anywhere]">
               Codessey
             </p>
-            <p className="m-0 mt-0.5 text-[9px] font-semibold uppercase tracking-[0.18em] text-zinc-500">
+            <p className="m-0 mt-0.5 text-[9px] font-semibold uppercase tracking-[0.14em] text-zinc-500 break-words [overflow-wrap:anywhere]">
               by CodeFundi
             </p>
           </div>
         </div>
       </div>
       {showHolo && <HoloLayers intensity={holoIntensity} />}
+      {signatureSrc ? (
+        <img
+          src={signatureSrc}
+          alt=""
+          draggable={false}
+          className="pointer-events-none absolute z-[8] w-[min(72%,19rem)] max-h-[56%] object-contain object-center select-none"
+          style={{
+            left: "33%",
+            top: "33%",
+            transform: "translate(-50%, -50%) rotate(-11deg)",
+            transformOrigin: "center",
+          }}
+        />
+      ) : null}
     </div>
   );
 }

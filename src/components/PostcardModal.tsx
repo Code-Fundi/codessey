@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useRef } from "react";
 import { Image as ImageIcon } from "lucide-react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { BrandCard } from "@/components/BrandCard";
 import { useCardInteraction } from "@/hooks/useCardInteraction";
-import { filenameForPostcard } from "@/lib/postcard-export";
+import { downloadObjectUrl, filenameForPostcard } from "@/lib/postcard-export";
 import { cn } from "@/lib/utils";
+import { useEffect, useRef } from "react";
 
 interface PostcardModalProps {
   open: boolean;
@@ -54,23 +54,7 @@ export function PostcardModal({
         <DialogTitle className="sr-only">
           {repoName ? `Postcard from ${repoName}` : "Codessey postcard"}
         </DialogTitle>
-        {capturedUrl ? (
-          <div className="flex flex-col items-center gap-3">
-            <img
-              src={capturedUrl}
-              alt={repoName ? `Postcard from ${repoName}` : "Codessey postcard"}
-              className="card-postcard rounded-2xl shadow-[0_30px_80px_-30px_rgba(21,128,61,0.45)]"
-            />
-            <a
-              href={capturedUrl}
-              download={filenameForPostcard(repoName)}
-              className="inline-flex h-8 items-center justify-center rounded-md border border-white/15 bg-transparent px-3 text-sm font-medium text-white/85 hover:bg-white/5 hover:text-white"
-            >
-              <ImageIcon size={14} className="mr-1.5" />
-              Download postcard
-            </a>
-          </div>
-        ) : (
+        <div className="relative">
           <button
             type="button"
             className={cn(
@@ -98,7 +82,24 @@ export function PostcardModal({
               holoIntensity={1}
             />
           </button>
-        )}
+          {!flipped && (
+            <div className="pointer-events-none absolute inset-x-0 bottom-3 z-20 flex justify-center px-3">
+              <button
+                type="button"
+                disabled={!capturedUrl}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  if (!capturedUrl) return;
+                  downloadObjectUrl(capturedUrl, filenameForPostcard(repoName));
+                }}
+                className="pointer-events-auto inline-flex h-8 items-center justify-center rounded-md border border-white/20 bg-black/55 px-3 text-sm font-medium text-white/90 backdrop-blur-sm hover:bg-white/10 hover:text-white disabled:opacity-60"
+              >
+                <ImageIcon size={14} className="mr-1.5" />
+                {capturedUrl ? "Download postcard" : "Preparing…"}
+              </button>
+            </div>
+          )}
+        </div>
       </DialogContent>
     </Dialog>
   );

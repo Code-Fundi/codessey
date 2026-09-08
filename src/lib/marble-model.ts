@@ -1,3 +1,4 @@
+import type { GenerationMode } from "@/lib/generation";
 import type { WorldLabsModel } from "@/lib/worldlabs.client";
 
 export type MarbleModelChoice = "draft" | "1.0" | "1.1";
@@ -67,4 +68,30 @@ export function resolveWorldLabsModel(
   if (choice === "draft") return "marble-1.0-draft";
   if (choice === "1.0") return "marble-1.0";
   return "marble-1.1";
+}
+
+export function isWorldLabsModel(value: unknown): value is WorldLabsModel {
+  return (
+    value === "marble-1.0-draft" ||
+    value === "marble-1.0" ||
+    value === "marble-1.1" ||
+    value === "marble-1.1-plus"
+  );
+}
+
+export function marbleModelLabel(model: string | null | undefined): string | null {
+  if (model === "marble-1.1-plus") return "Marble 1.1 Plus";
+  if (model === "marble-1.1") return "Marble 1.1";
+  if (model === "marble-1.0") return "Marble 1.0";
+  if (model === "marble-1.0-draft") return "Draft";
+  return null;
+}
+
+export function worldTypeLabel(
+  mode: GenerationMode | null | undefined,
+  model?: string | null,
+): string {
+  if (model === "marble-1.1-plus") return "Variable world";
+  if (mode === "pano") return "Panorama";
+  return "World";
 }

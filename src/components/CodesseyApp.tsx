@@ -104,11 +104,12 @@ export function CodesseyApp({
         return cachedWorldFromRow(row, branch);
       });
       if (row.status === "complete" && row.id === generatingId) {
+        syncRepoPath(row.repo_url);
         toast.success("World ready.", { description: row.repo_name ?? row.repo_url });
         void refetchWorlds();
       }
     },
-    [branch, generatingId, refetchWorlds],
+    [branch, generatingId, refetchWorlds, syncRepoPath],
   );
 
   const handleCreditsOpenChange = useCallback((open: boolean, reason?: CreditsDialogReason) => {
@@ -235,12 +236,15 @@ export function CodesseyApp({
         model,
       );
       if (result) {
-        setWorld((current) => (current?.id === result.id ? result : current));
+        setWorld(result);
+        setSelectedId(result.id ?? null);
+        setMainTab("repos");
+        if (result.repoUrl) syncRepoPath(result.repoUrl);
         toast.success("World ready.", { description: result.repoName });
         void refetchWorlds();
       }
     },
-    [generate, repoUrl, branch, refetchWorlds, handleCreditsOpenChange],
+    [generate, repoUrl, branch, refetchWorlds, handleCreditsOpenChange, syncRepoPath],
   );
 
   const handleNeedSignIn = useCallback(() => {

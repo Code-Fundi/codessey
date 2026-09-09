@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { CUSTOM_MIN_USD, PRESET_PACKS, resolvePackAmount } from "./credits";
+import {
+  CUSTOM_MIN_USD,
+  PRESET_PACKS,
+  catalogPackFromRow,
+  customCoinsForUsd,
+  resolvePackAmount,
+} from "./credits";
+import type { CoinPackRow } from "./database.types";
 
 describe("resolvePackAmount", () => {
   it("maps preset packs to cents and bonus coins", () => {
@@ -33,5 +40,27 @@ describe("resolvePackAmount", () => {
 
   it("rejects fractional custom dollars", () => {
     expect(() => resolvePackAmount("custom", 5.5)).toThrow(/whole dollar/);
+  });
+
+  it("maps public coin_packs rows into dialog cards", () => {
+    const row: CoinPackRow = {
+      id: "p20",
+      label: "$10",
+      usd_cents: 1000,
+      coins: 20,
+      sort_order: 2,
+      accent: "emerald",
+    };
+    expect(catalogPackFromRow(row)).toEqual({
+      id: "p20",
+      label: "$10",
+      usd: 10,
+      usdCents: 1000,
+      coins: 20,
+      accent: "emerald",
+      coinStack: 2,
+    });
+    expect(customCoinsForUsd(6, 5, 50)).toBe(12);
+    expect(customCoinsForUsd(4, 5, 50)).toBe(0);
   });
 });

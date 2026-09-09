@@ -12,10 +12,11 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { CUSTOM_MIN_USD, PRESET_PACKS } from "@/lib/credits";
+import { customCoinsForUsd } from "@/lib/credits";
+import { fetchCoinCatalog, type CoinCatalog } from "@/lib/credits.client";
 import type { CoinPackId } from "@/lib/database.types";
 import { formatRefreshWait } from "@/lib/credit-status";
-import { CUSTOM_CENTS_PER_COIN, WORLDLABS_API_KEYS_URL } from "@/lib/generation";
+import { WORLDLABS_API_KEYS_URL } from "@/lib/generation";
 import { paystackBrowserClient } from "@/lib/paystack.client";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
@@ -58,11 +59,13 @@ export function CreditPurchaseDialog({
   onPurchased,
   nextPath,
 }: CreditPurchaseDialogProps) {
-  const [packId, setPackId] = useState<CoinPackId>("p10");
+  const [packId, setPackId] = useState<string>("p10");
   const [customUsd, setCustomUsd] = useState("6");
   const [busy, setBusy] = useState(false);
   const [keyDraft, setKeyDraft] = useState("");
   const [hasKey, setHasKey] = useState(false);
+  const [catalog, setCatalog] = useState<CoinCatalog | null>(null);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
   const expired = reason === "expired" || reason === "guestbook" || reason === "plaque";
 
   useEffect(() => {
@@ -72,14 +75,37 @@ export function CreditPurchaseDialog({
     setKeyDraft(stored ?? "");
   }, [open]);
 
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    setCatalogError(null);
+    void fetchCoinCatalog()
+      .then((next) => {
+        if (cancelled) return;
+        setCatalog(next);
+        setPackId((current) => {
+          if (current === "custom") return current;
+          if (next.packs.some((pack) => pack.id === current)) return current;
+          return next.packs[0]?.id ?? "custom";
+        });
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        setCatalog(null);
+        setCatalogError(error instanceof Error ? error.message : "Could not load prices.");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
+
   const selectedCoins = useMemo(() => {
+    if (!catalog) return 0;
     if (packId === "custom") {
-      const usd = Number(customUsd);
-      if (!Number.isFinite(usd) || usd < CUSTOM_MIN_USD) return 0;
-      return Math.floor((usd * 100) / CUSTOM_CENTS_PER_COIN);
+      return customCoinsForUsd(Number(customUsd), catalog.customMinUsd, catalog.centsPerCoin);
     }
-    return PRESET_PACKS.find((p) => p.id === packId)?.coins ?? 0;
-  }, [packId, customUsd]);
+    return catalog.packs.find((pack) => pack.id === packId)?.coins ?? 0;
+  }, [catalog, packId, customUsd]);
 
   const signInWithGithub = async () => {
     const supabase = createSupabaseBrowserClient();
@@ -118,7 +144,7 @@ export function CreditPurchaseDialog({
     setBusy(true);
     try {
       const checkout = await paystackBrowserClient.initializeCheckout({
-        packId,
+        packId: packId as CoinPackId,
         customUsd: packId === "custom" ? Number(customUsd) : undefined,
       });
       await paystackBrowserClient.openCheckout({
@@ -252,25 +278,42 @@ export function CreditPurchaseDialog({
         </div>
 
         <div className={cn("space-y-3", !signedIn && "opacity-45 pointer-events-none")}>
-          <div className="grid grid-cols-3 gap-2">
-            {PRESET_PACKS.map((pack) => (
-              <button
-                key={pack.id}
-                type="button"
-                onClick={() => setPackId(pack.id)}
-                disabled={!signedIn}
-                className={cn(
-                  "rounded-xl border px-2 py-3 text-left transition-all",
-                  ACCENT[pack.accent],
-                  packId === pack.id && "ring-2 ring-white/70 scale-[1.02]",
-                )}
-              >
-                <CoinStack count={pack.coinStack} />
-                <p className="mt-2 text-sm font-bold text-white">${pack.usd}</p>
-                <p className="text-[11px] text-white/60">{pack.coins} coins</p>
-              </button>
-            ))}
-          </div>
+          {catalogError && (
+            <p className="text-sm text-red-300/90 rounded-lg border border-red-500/20 bg-red-500/10 p-3">
+              {catalogError}
+            </p>
+          )}
+          {!catalog && !catalogError && (
+            <div className="grid grid-cols-3 gap-2">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <div
+                  key={i}
+                  className="h-[6.5rem] rounded-xl border border-white/10 bg-white/[0.04] animate-pulse"
+                />
+              ))}
+            </div>
+          )}
+          {catalog && (
+            <div className="grid grid-cols-3 gap-2">
+              {catalog.packs.map((pack) => (
+                <button
+                  key={pack.id}
+                  type="button"
+                  onClick={() => setPackId(pack.id)}
+                  disabled={!signedIn}
+                  className={cn(
+                    "rounded-xl border px-2 py-3 text-left transition-all",
+                    ACCENT[pack.accent],
+                    packId === pack.id && "ring-2 ring-white/70 scale-[1.02]",
+                  )}
+                >
+                  <CoinStack count={pack.coinStack} />
+                  <p className="mt-2 text-sm font-bold text-white">${pack.usd}</p>
+                  <p className="text-[11px] text-white/60">{pack.coins} coins</p>
+                </button>
+              ))}
+            </div>
+          )}
 
           <div
             className={cn(
@@ -283,10 +326,10 @@ export function CreditPurchaseDialog({
               <span className="text-white/60 text-sm">$</span>
               <Input
                 type="number"
-                min={CUSTOM_MIN_USD}
+                min={catalog?.customMinUsd ?? 5}
                 step={1}
                 value={customUsd}
-                disabled={!signedIn}
+                disabled={!signedIn || !catalog}
                 onFocus={() => setPackId("custom")}
                 onChange={(e) => {
                   setPackId("custom");
@@ -295,9 +338,9 @@ export function CreditPurchaseDialog({
                 className="h-10 bg-black/30 border-white/10 text-white"
               />
               <span className="text-xs text-white/45 shrink-0">
-                {Number.isFinite(Number(customUsd)) && Number(customUsd) >= CUSTOM_MIN_USD
-                  ? `${Math.floor((Number(customUsd) * 100) / CUSTOM_CENTS_PER_COIN)} coins`
-                  : `min $${CUSTOM_MIN_USD}`}
+                {catalog && selectedCoins > 0 && packId === "custom"
+                  ? `${selectedCoins} coins`
+                  : `min $${catalog?.customMinUsd ?? 5}`}
               </span>
             </div>
           </div>
@@ -305,7 +348,7 @@ export function CreditPurchaseDialog({
           <Button
             type="button"
             onClick={() => void purchase()}
-            disabled={!signedIn || busy || selectedCoins <= 0}
+            disabled={!signedIn || busy || selectedCoins <= 0 || !catalog}
             className="w-full h-11 bg-blue-700 hover:bg-blue-800 text-white font-semibold disabled:opacity-40 disabled:saturate-50"
           >
             {busy ? (

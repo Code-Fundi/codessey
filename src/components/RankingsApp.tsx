@@ -5,7 +5,7 @@ import { Header } from "@/components/Header";
 import type { CreditsDialogReason } from "@/components/CreditPurchaseDialog";
 import type { WorldRankingSnapshotRow, WorldRow } from "@/lib/database.types";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
-import { parseGithubOwnerRepo, repoNameFromUrl } from "@/lib/repo-url";
+import { parseGithubOwnerRepo, repoAppPath, repoNameFromUrl } from "@/lib/repo-url";
 import Link from "next/link";
 
 type RankedWorld = WorldRankingSnapshotRow & {
@@ -33,7 +33,7 @@ function WorldRankCard({
   const world = nestedWorld(row);
   const url = world?.repo_url ?? "";
   const parsed = parseGithubOwnerRepo(url);
-  const path = parsed ? `/${parsed.owner}/${parsed.repo}` : "/";
+  const path = parsed ? repoAppPath(parsed.owner, parsed.repo) : "/";
   const name = repoNameFromUrl(url) ?? world?.repo_name ?? "World";
   const thumb = world?.pano_url || world?.thumbnail_url;
   const count = metric === "visits" ? row.visit_count : row.signature_count;

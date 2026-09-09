@@ -1,4 +1,4 @@
-import type { CoinPackId } from "@/lib/database.types";
+import type { CoinPackAccent, CoinPackId, CoinPackRow } from "@/lib/database.types";
 import { CUSTOM_CENTS_PER_COIN } from "@/lib/generation";
 
 export const PRESET_PACKS: Array<{
@@ -6,7 +6,7 @@ export const PRESET_PACKS: Array<{
   usd: number;
   usdCents: number;
   coins: number;
-  accent: "amber" | "emerald" | "violet";
+  accent: CoinPackAccent;
   coinStack: 1 | 2 | 3;
 }> = [
   { id: "p10", usd: 5, usdCents: 500, coins: 10, accent: "amber", coinStack: 1 },
@@ -15,6 +15,40 @@ export const PRESET_PACKS: Array<{
 ];
 
 export const CUSTOM_MIN_USD = 5;
+
+export type DisplayCoinPack = {
+  id: string;
+  label: string;
+  usd: number;
+  usdCents: number;
+  coins: number;
+  accent: CoinPackAccent;
+  coinStack: 1 | 2 | 3;
+};
+
+const ACCENTS = new Set<CoinPackAccent>(["amber", "emerald", "violet"]);
+
+export function catalogPackFromRow(row: CoinPackRow): DisplayCoinPack {
+  const accent: CoinPackAccent = ACCENTS.has(row.accent) ? row.accent : "amber";
+  const stack = Math.min(3, Math.max(1, row.sort_order)) as 1 | 2 | 3;
+  return {
+    id: row.id,
+    label: row.label,
+    usd: row.usd_cents / 100,
+    usdCents: row.usd_cents,
+    coins: row.coins,
+    accent,
+    coinStack: stack,
+  };
+}
+
+export function customCoinsForUsd(usd: number, minUsd: number, centsPerCoin: number): number {
+  if (!Number.isFinite(usd) || usd < minUsd) return 0;
+  const usdCents = Math.round(usd * 100);
+  if (usdCents % 100 !== 0) return 0;
+  if (centsPerCoin <= 0 || usdCents % centsPerCoin !== 0) return 0;
+  return usdCents / centsPerCoin;
+}
 
 export function resolvePackAmount(
   packId: CoinPackId,

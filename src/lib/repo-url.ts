@@ -43,6 +43,12 @@ export function githubRepoUrl(owner: string, repo: string): string {
   return `https://github.com/${owner}/${repo}`.replace(/\.git$/i, "");
 }
 
+export const REPO_APP_PREFIX = "/repo";
+
+export function repoAppPath(owner: string, repo: string): string {
+  return `${REPO_APP_PREFIX}/${owner}/${repo}`;
+}
+
 export function repoNameFromUrl(url: string): string | null {
   const parsed = parseGithubOwnerRepo(url);
   if (parsed) return parsed.repo;
@@ -57,5 +63,5 @@ export function repoNameFromUrl(url: string): string | null {
 export function githubPathForRepo(url: string): string | null {
   const parsed = parseGithubOwnerRepo(url);
   if (!parsed) return null;
-  return `/${parsed.owner}/${parsed.repo}`;
+  return repoAppPath(parsed.owner, parsed.repo);
 }

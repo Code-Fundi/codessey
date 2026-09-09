@@ -33,6 +33,8 @@ describe("plan credit contracts", () => {
     expect(existsSync(resolve(root, "src/app/api/paystack/verify/route.ts"))).toBe(false);
     expect(existsSync(resolve(root, "src/app/api/paystack/webhook/route.ts"))).toBe(true);
     expect(read("src/lib/paystack.client.ts")).toMatch(/create_my_payment/);
+    expect(read("src/lib/credits.client.ts")).toMatch(/from\("coin_packs"\)/);
+    expect(read("src/components/CreditPurchaseDialog.tsx")).toMatch(/fetchCoinCatalog/);
   });
 
   it("generates worlds through publishable-key RPCs", () => {

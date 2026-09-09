@@ -4,6 +4,7 @@ import {
   githubRepoUrl,
   normalizeRepoUrl,
   parseGithubOwnerRepo,
+  repoAppPath,
   repoNameFromUrl,
 } from "./repo-url";
 import { asTrimmed } from "./utils";
@@ -50,7 +51,8 @@ describe("parseGithubOwnerRepo", () => {
 
   it("builds canonical github URLs and app paths", () => {
     expect(githubRepoUrl("Acme", "Repo.git")).toBe("https://github.com/Acme/Repo");
-    expect(githubPathForRepo("https://github.com/Acme/Repo")).toBe("/Acme/Repo");
+    expect(repoAppPath("Acme", "Repo")).toBe("/repo/Acme/Repo");
+    expect(githubPathForRepo("https://github.com/Acme/Repo")).toBe("/repo/Acme/Repo");
     expect(repoNameFromUrl("https://github.com/Acme/Repo")).toBe("Repo");
   });
 });

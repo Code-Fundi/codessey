@@ -1,10 +1,11 @@
-import { CodesseyApp } from "@/components/CodesseyApp";
+import { redirect } from "next/navigation";
+import { repoAppPath } from "@/lib/repo-url";
 
-export default async function RepoWorldPage({
+export default async function LegacyRepoWorldPage({
   params,
 }: {
   params: Promise<{ owner: string; repo: string }>;
 }) {
   const { owner, repo } = await params;
-  return <CodesseyApp initialOwner={owner} initialRepo={repo} />;
+  redirect(repoAppPath(owner, repo));
 }
